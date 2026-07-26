@@ -1,0 +1,139 @@
+{
+  "project": "Texas Holdem Trainer",
+  "status": "completed",
+  "current_module": "6",
+  "modules": [
+    {
+      "id": "1",
+      "name": "基础设施与项目搭建 (Infrastructure & Setup)",
+      "status": "completed",
+      "tasks": [
+        {
+          "id": "1.1",
+          "desc": "初始化 React + Vite + TypeScript 项目",
+          "status": "completed"
+        },
+        {
+          "id": "1.2",
+          "desc": "配置 Tailwind CSS",
+          "status": "completed"
+        },
+        {
+          "id": "1.3",
+          "desc": "建立项目基础目录结构 (components, hooks, utils, store)",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "id": "2",
+      "name": "扑克核心逻辑库 (Poker Core Logic)",
+      "status": "completed",
+      "tasks": [
+        {
+          "id": "2.1",
+          "desc": "实现卡牌和牌堆的定义与洗牌算法",
+          "status": "completed"
+        },
+        {
+          "id": "2.2",
+          "desc": "集成或实现手牌大小评估算法 (Hand Evaluation)",
+          "status": "completed"
+        },
+        {
+          "id": "2.3",
+          "desc": "编写逻辑相关的单元测试",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "id": "3",
+      "name": "资金管理与大厅系统 (Bankroll & Lobby)",
+      "status": "completed",
+      "tasks": [
+        {
+          "id": "3.1",
+          "desc": "实现本地存储 (LocalStorage) 资金状态管理",
+          "status": "completed"
+        },
+        {
+          "id": "3.2",
+          "desc": "开发大厅界面 (Lobby UI) 展示总资金",
+          "status": "completed"
+        },
+        {
+          "id": "3.3",
+          "desc": "实现桌子级别选择与30买入原则资金校验提示",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "id": "4",
+      "name": "游戏状态机与引擎 (Game Engine)",
+      "status": "completed",
+      "tasks": [
+        {
+          "id": "4.1",
+          "desc": "设计游戏状态管理 (GameState: 翻前, 翻牌等)",
+          "status": "completed"
+        },
+        {
+          "id": "4.2",
+          "desc": "实现发牌与轮次推进逻辑",
+          "status": "completed"
+        },
+        {
+          "id": "4.3",
+          "desc": "实现底池(Pot)计算与玩家动作(Action)处理",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "id": "5",
+      "name": "牌桌 UI 与基础 AI (Game UI & AI)",
+      "status": "completed",
+      "tasks": [
+        {
+          "id": "5.1",
+          "desc": "开发牌桌核心 UI (桌面, 公共牌, 玩家位置)",
+          "status": "completed"
+        },
+        {
+          "id": "5.2",
+          "desc": "开发玩家操作面板 (弃牌, 过牌, 跟注, 加注)",
+          "status": "completed"
+        },
+        {
+          "id": "5.3",
+          "desc": "实现基础的 AI 对手决策逻辑，使游戏可以流转",
+          "status": "completed"
+        },
+        {
+          "id": "5.4",
+          "desc": "实现摊牌结算与资金更新回写",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "id": "6",
+      "name": "教学与辅助模块 (Educational UI)",
+      "status": "completed",
+      "tasks": [
+        {
+          "id": "6.1",
+          "desc": "添加静态牌型大小图鉴面板",
+          "status": "completed"
+        },
+        {
+          "id": "6.2",
+          "desc": "实现玩家当前手牌实时牌力提示功能",
+          "status": "completed"
+        }
+      ]
+    }
+  ]
+}
