@@ -41,6 +41,9 @@ interface GameState {
   gameLog: string[];
   // 手牌编号（每 startHand 递增，仅用于日志标注，不保存历史）
   handNumber: number;
+  // 入座会话 id（joinTable 时生成）。日志推送以此区分会话：handNumber 每次入座会重置，
+  // 必须 sessionId + handNumber 才能全局唯一地定位一手牌
+  sessionId: string | null;
 
   // Actions
   joinTable: (table: TableConfig, humanBuyIn: number) => void;
@@ -77,6 +80,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   lastRaiseSize: 0,
   gameLog: [],
   handNumber: 0,
+  sessionId: null,
 
   logAction: (msg: string) => {
     set((state) => ({ gameLog: [...state.gameLog, msg] }));
@@ -109,6 +113,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       dealerIndex: 0,
       stage: 'idle',
       handNumber: 0,
+      sessionId: new Date().toISOString(),
       gameLog: [`你坐下了 ${table.name} 牌桌，买入 $${humanBuyIn}`]
     });
   },
@@ -125,6 +130,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       pot: 0,
       board: [],
       handNumber: 0,
+      sessionId: null,
       gameLog: []
     });
     

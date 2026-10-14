@@ -16,3 +16,13 @@ services:
       - "1111:80"
     depends_on:
       - api
+    networks:
+      - default
+      - recordstore
+
+# recordstore（sqlite-lib）容器所在的 docker 网络，web 容器借此用服务名 recordstore:8787 访问。
+# 部署前在服务器上用 docker network ls 核对实际网络名，用 RECORDSTORE_NETWORK 环境变量覆盖。
+networks:
+  recordstore:
+    external: true
+    name: ${RECORDSTORE_NETWORK:-recordstore_default}
