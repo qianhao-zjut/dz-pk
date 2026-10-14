@@ -333,16 +333,16 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                   const raiseAmount = currentMaxBet === 0 ? table.bigBlind : currentMaxBet * 2;
                   playerRaise(raiseAmount);
                 }}
-                disabled={!isHumanTurn}
-                className={`px-4 sm:px-6 py-2 rounded-xl font-bold transition-all ${isHumanTurn ? 'bg-purple-600 hover:bg-purple-500' : 'bg-gray-700 text-gray-500'}`}
+                disabled={!isHumanTurn || !human?.canRaise}
+                className={`px-4 sm:px-6 py-2 rounded-xl font-bold transition-all ${isHumanTurn && human?.canRaise ? 'bg-purple-600 hover:bg-purple-500' : 'bg-gray-700 text-gray-500'}`}
               >
                 加注 (Raise)
               </button>
 
               <button
                 onClick={() => setShowAllInModal(true)}
-                disabled={!isHumanTurn || (human && human.chips === 0)}
-                className={`px-4 sm:px-6 py-2 rounded-xl font-bold transition-all ${isHumanTurn && human && human.chips > 0 ? 'bg-orange-600 hover:bg-orange-500' : 'bg-gray-700 text-gray-500'}`}
+                disabled={!isHumanTurn || (human && human.chips === 0) || !human?.canRaise}
+                className={`px-4 sm:px-6 py-2 rounded-xl font-bold transition-all ${isHumanTurn && human && human.chips > 0 && human.canRaise ? 'bg-orange-600 hover:bg-orange-500' : 'bg-gray-700 text-gray-500'}`}
               >
                 All-in
               </button>

@@ -15,6 +15,8 @@ export interface Player {
   currentBet: number;
   status: PlayerStatus;
   hasActed: boolean;
+  // 当前是否允许加注（面对不完整 All-in 时，已行动过的玩家只能跟注/弃牌）
+  canRaise: boolean;
 }
 
 interface GameState {
@@ -31,6 +33,9 @@ interface GameState {
   dealerIndex: number;
   currentPlayerIndex: number;
   currentMaxBet: number;
+  // 上一次完整加注的增量（决定最小加注额 = currentMaxBet + lastRaiseSize）
+  // 每街重置为大盲；翻前初始化为大盲（首次加注至少 2BB）
+  lastRaiseSize: number;
   
   // History/Log for teaching purposes
   gameLog: string[];
@@ -67,6 +72,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   dealerIndex: 0,
   currentPlayerIndex: -1,
   currentMaxBet: 0,
+  lastRaiseSize: 0,
   gameLog: [],
 
   logAction: (msg: string) => {
@@ -76,7 +82,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   joinTable: (table: TableConfig, humanBuyIn: number) => {
     // 初始化玩家（1名人类 + 3名AI）
     const newPlayers: Player[] = [
-      { id: 'human', name: '你 (Player)', isAI: false, chips: humanBuyIn, cards: [], currentBet: 0, status: 'active', hasActed: false },
+      { id: 'human', name: '你 (Player)', isAI: false, chips: humanBuyIn, cards: [], currentBet: 0, status: 'active', hasActed: false, canRaise: true },
     ];
     
     // 给AI加上和桌子标准买入相近的筹码
@@ -89,7 +95,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         cards: [],
         currentBet: 0,
         status: 'active',
-        hasActed: false
+        hasActed: false,
+        canRaise: true
       });
     });
 
@@ -123,7 +130,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     const { players, dealerIndex, table } = get();
     if (!table) return;
 
-    let deck = shuffleDeck(createDeck());
+    const deck = shuffleDeck(createDeck());
     const updatedPlayers = players.map(p => {
       // AI 破产自动重买
       let chips = p.chips;
@@ -137,7 +144,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         cards: [] as Card[],
         currentBet: 0,
         status: chips > 0 ? 'active' : 'sitting-out' as PlayerStatus,
-        hasActed: false
+        hasActed: false,
+        canRaise: true
       };
     });
 
@@ -175,6 +183,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       players: updatedPlayers,
       pot,
       currentMaxBet: table.bigBlind,
+      lastRaiseSize: table.bigBlind,
       currentPlayerIndex: utgIndex,
       gameLog: ['--- 新的一手牌开始 ---', `小盲注下注 $${sbAmount}, 大盲注下注 $${bbAmount}`]
     });
@@ -195,7 +204,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   playerCall: () => {
     const { players, currentPlayerIndex, currentMaxBet, pot } = get();
     const p = players[currentPlayerIndex];
-    const amountToCall = currentMaxBet - p.currentBet;
+    const amountToCall = Math.max(0, currentMaxBet - p.currentBet);
     
     // 如果筹码不够跟注，则是All-in
     const actualCall = Math.min(p.chips, amountToCall);
@@ -231,26 +240,72 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   playerRaise: (totalBetAmount: number) => {
-    const { players, currentPlayerIndex, pot } = get();
+    const { players, currentPlayerIndex, pot, currentMaxBet, lastRaiseSize } = get();
     const p = players[currentPlayerIndex];
-    const amountToAdd = totalBetAmount - p.currentBet;
-    
-    const actualAdd = Math.min(p.chips, amountToAdd);
-    
+    if (!p || p.status !== 'active') return;
+
+    // 目标至少为跟注额；没有加注权限时（面对不完整 All-in 已行动过的玩家）只能跟注
+    let target = Math.max(totalBetAmount, currentMaxBet);
+    if (!p.canRaise) {
+      target = currentMaxBet;
+    }
+    // 筹码足够最小加注却加得太小 → 钳制到最小加注额（min-raise 规则）
+    const fullRaiseTarget = currentMaxBet + lastRaiseSize;
+    if (target > currentMaxBet && target < fullRaiseTarget && p.currentBet + p.chips >= fullRaiseTarget) {
+      target = fullRaiseTarget;
+    }
+
+    const amountToAdd = target - p.currentBet;
+    const actualAdd = Math.min(p.chips, Math.max(0, amountToAdd));
+    const newBet = p.currentBet + actualAdd;
+    const increment = newBet - currentMaxBet;
+
     const newPlayers = [...players];
     newPlayers[currentPlayerIndex] = { ...p, hasActed: true };
     newPlayers[currentPlayerIndex].chips -= actualAdd;
-    newPlayers[currentPlayerIndex].currentBet += actualAdd;
-    
+    newPlayers[currentPlayerIndex].currentBet = newBet;
     if (newPlayers[currentPlayerIndex].chips === 0) {
       newPlayers[currentPlayerIndex].status = 'all-in';
     }
+    const isAllIn = newPlayers[currentPlayerIndex].status === 'all-in';
 
-    get().logAction(`${p.name} 加注 (Raise) 到 $${newPlayers[currentPlayerIndex].currentBet}`);
-    set({ 
-      players: newPlayers, 
+    // currentMaxBet 只允许单调上升，绝不被小额 All-in 拉低
+    let newMaxBet = currentMaxBet;
+    let newLastRaiseSize = lastRaiseSize;
+
+    if (increment <= 0) {
+      // 实际效果等于跟注（含短码 All-in 跟注），不改变最高下注与最小加注增量
+      get().logAction(isAllIn
+        ? `${p.name} 全下跟注 (All-in Call) $${actualAdd}`
+        : `${p.name} 跟注 (Call) $${actualAdd}`);
+    } else if (increment >= lastRaiseSize) {
+      // 完整加注：更新最高下注与最小加注增量，行动对所有玩家重新开放
+      newMaxBet = newBet;
+      newLastRaiseSize = increment;
+      newPlayers.forEach((pl, i) => {
+        newPlayers[i] = { ...pl, canRaise: true };
+      });
+      get().logAction(isAllIn
+        ? `${p.name} 全下加注 (All-in Raise) 到 $${newBet}`
+        : `${p.name} 加注 (Raise) 到 $${newBet}`);
+    } else {
+      // 不完整 All-in 加注（筹码不足最小加注额）：
+      // 大家必须跟到这个数额，但不构成真正加注——
+      // 不更新最小加注增量，且本轮已行动过的玩家之后只能跟注/弃牌
+      newMaxBet = newBet;
+      newPlayers.forEach((pl, i) => {
+        if (pl.hasActed && pl.status === 'active') {
+          newPlayers[i] = { ...pl, canRaise: false };
+        }
+      });
+      get().logAction(`${p.name} 全下到 $${newBet} (All-in，不足最小加注额，已行动玩家不可再加注)`);
+    }
+
+    set({
+      players: newPlayers,
       pot: pot + actualAdd,
-      currentMaxBet: newPlayers[currentPlayerIndex].currentBet
+      currentMaxBet: newMaxBet,
+      lastRaiseSize: newLastRaiseSize
     });
     get().advanceTurn();
   },
@@ -292,12 +347,13 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   advanceStage: () => {
-    const { stage, deck, board, players, dealerIndex } = get();
+    const { stage, deck, board, players, dealerIndex, table } = get();
+    const bb = table ? table.bigBlind : 0;
     
     // 收集筹码到底池，重置本轮下注和行动标记
-    const newPlayers = players.map(p => ({ ...p, currentBet: 0, hasActed: false }));
-    let newDeck = [...deck];
-    let newBoard = [...board];
+    const newPlayers = players.map(p => ({ ...p, currentBet: 0, hasActed: false, canRaise: true }));
+    const newDeck = [...deck];
+    const newBoard = [...board];
     let newStage: GameStage = stage;
 
     const notFolded = newPlayers.filter(p => p.status !== 'folded');
@@ -306,7 +362,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       // 只有一人未弃牌，直接获胜
       get().logAction(`${notFolded[0].name} 赢得了底池，其他人已弃牌。`);
       newStage = 'showdown';
-      set({ stage: newStage, players: newPlayers, currentMaxBet: 0 });
+      set({ stage: newStage, players: newPlayers, currentMaxBet: 0, lastRaiseSize: bb });
       get().handleShowdown();
       return;
     }
@@ -320,7 +376,7 @@ export const useGameStore = create<GameState>((set, get) => ({
        }
        get().logAction(`玩家 All-in，直接发完公共牌: ${newBoard.join(' ')}`);
        newStage = 'showdown';
-       set({ stage: newStage, players: newPlayers, deck: newDeck, board: newBoard, currentMaxBet: 0 });
+       set({ stage: newStage, players: newPlayers, deck: newDeck, board: newBoard, currentMaxBet: 0, lastRaiseSize: bb });
        get().handleShowdown();
        return;
     }
@@ -355,6 +411,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       board: newBoard, 
       players: newPlayers,
       currentMaxBet: 0,
+      lastRaiseSize: bb,
       currentPlayerIndex: nextIdx
     });
 
@@ -419,21 +476,23 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   actAI: () => {
-    const { players, currentPlayerIndex, currentMaxBet } = get();
+    const { players, currentPlayerIndex, currentMaxBet, lastRaiseSize, table } = get();
     const p = players[currentPlayerIndex];
     if (!p || !p.isAI || p.status !== 'active') return;
 
-    const amountToCall = currentMaxBet - p.currentBet;
+    const amountToCall = Math.max(0, currentMaxBet - p.currentBet);
+    const bb = table ? table.bigBlind : 0;
+    // 合法加注目标：至少满足最小加注额（currentMaxBet + lastRaiseSize）
+    const raiseTarget = currentMaxBet + Math.max(bb * 3, lastRaiseSize);
     
     // 极简AI决策逻辑
     const rand = Math.random();
     
     if (amountToCall === 0) {
       // 没人加注
-      if (rand < 0.2) {
-        // 20% 概率加注 (简单固定加注当前底池的3盲注)
-        const { table } = get();
-        get().playerRaise(currentMaxBet + (table ? table.bigBlind * 3 : 0));
+      if (rand < 0.2 && p.canRaise) {
+        // 20% 概率加注
+        get().playerRaise(raiseTarget);
       } else {
         // 80% 过牌
         get().playerCheck();
@@ -443,13 +502,12 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (rand < 0.4) {
         // 40% 弃牌
         get().playerFold();
-      } else if (rand < 0.9) {
-        // 50% 跟注
+      } else if (rand < 0.9 || !p.canRaise) {
+        // 50% 跟注（无加注权限时只能跟注）
         get().playerCall();
       } else {
         // 10% 反加
-        const { table } = get();
-        get().playerRaise(currentMaxBet + (table ? table.bigBlind * 3 : 0));
+        get().playerRaise(raiseTarget);
       }
     }
   }
