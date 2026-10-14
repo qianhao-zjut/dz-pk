@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Card } from '../utils/poker';
-import { createDeck, shuffleDeck, compareHands } from '../utils/poker';
+import { createDeck, shuffleDeck, compareHands, handNameCN } from '../utils/poker';
 import type { TableConfig } from '../components/Lobby';
 
 export type GameStage = 'idle' | 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
@@ -39,6 +39,8 @@ interface GameState {
   
   // History/Log for teaching purposes
   gameLog: string[];
+  // 手牌编号（每 startHand 递增，仅用于日志标注，不保存历史）
+  handNumber: number;
 
   // Actions
   joinTable: (table: TableConfig, humanBuyIn: number) => void;
@@ -74,6 +76,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   currentMaxBet: 0,
   lastRaiseSize: 0,
   gameLog: [],
+  handNumber: 0,
 
   logAction: (msg: string) => {
     set((state) => ({ gameLog: [...state.gameLog, msg] }));
@@ -105,6 +108,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       players: newPlayers,
       dealerIndex: 0,
       stage: 'idle',
+      handNumber: 0,
       gameLog: [`你坐下了 ${table.name} 牌桌，买入 $${humanBuyIn}`]
     });
   },
@@ -120,6 +124,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       players: [],
       pot: 0,
       board: [],
+      handNumber: 0,
       gameLog: []
     });
     
@@ -127,16 +132,18 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   startHand: () => {
-    const { players, dealerIndex, table } = get();
+    const { players, dealerIndex, table, handNumber } = get();
     if (!table) return;
 
     const deck = shuffleDeck(createDeck());
+    // 重买日志先收集到局部数组，避免被下面的 gameLog 重置吞掉
+    const rebuyLogs: string[] = [];
     const updatedPlayers = players.map(p => {
       // AI 破产自动重买
       let chips = p.chips;
       if (p.isAI && chips === 0) {
         chips = table.buyIn;
-        get().logAction(`${p.name} 自动重新买入 $${chips}`);
+        rebuyLogs.push(`${p.name} 自动重新买入 $${chips}`);
       }
       return {
         ...p,
@@ -176,6 +183,13 @@ export const useGameStore = create<GameState>((set, get) => ({
     // 枪口下(UTG)先行动
     const utgIndex = (dealerIndex + 3) % updatedPlayers.length;
 
+    // 日志素材：带入筹码（盲注已扣，故加回 currentBet）、人类底牌
+    const human = updatedPlayers.find(p => p.id === 'human');
+    const stacksInfo = updatedPlayers
+      .filter(p => p.status !== 'sitting-out')
+      .map(p => `${p.name} $${p.chips + p.currentBet}`)
+      .join(' / ');
+
     set({
       stage: 'preflop',
       deck,
@@ -185,7 +199,14 @@ export const useGameStore = create<GameState>((set, get) => ({
       currentMaxBet: table.bigBlind,
       lastRaiseSize: table.bigBlind,
       currentPlayerIndex: utgIndex,
-      gameLog: ['--- 新的一手牌开始 ---', `小盲注下注 $${sbAmount}, 大盲注下注 $${bbAmount}`]
+      handNumber: handNumber + 1,
+      gameLog: [
+        `--- 第 ${handNumber + 1} 手牌开始 (庄家: ${updatedPlayers[dealerIndex].name}) ---`,
+        ...rebuyLogs,
+        `${updatedPlayers[sbIndex].name} 下小盲 $${sbAmount}, ${updatedPlayers[bbIndex].name} 下大盲 $${bbAmount}`,
+        `带入筹码: ${stacksInfo}`,
+        ...(human && human.status === 'active' ? [`你的底牌: ${human.cards.join(' ')}`] : [])
+      ]
     });
   },
 
@@ -218,7 +239,10 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
 
     const totalBet = newPlayers[currentPlayerIndex].currentBet;
-    if (actualCall === totalBet) {
+    if (newPlayers[currentPlayerIndex].status === 'all-in') {
+      // 筹码全压上的跟注（含不足额跟注），明确标记 All-in，与 playerRaise 路径口径一致
+      get().logAction(`${p.name} 全下跟注 (All-in Call) $${actualCall}`);
+    } else if (actualCall === totalBet) {
       get().logAction(`${p.name} 跟注 (Call) $${actualCall}`);
     } else {
       get().logAction(`${p.name} 跟注 (Call) $${actualCall} (本轮补齐至 $${totalBet})`);
@@ -431,9 +455,15 @@ export const useGameStore = create<GameState>((set, get) => ({
       const wIdx = newPlayers.findIndex(p => p.id === winner.id);
       newPlayers[wIdx].chips += pot;
       get().logAction(`${winner.name} 收下底池 $${pot}`);
+      get().logAction(`本手结束筹码: ${newPlayers.map(p => `${p.name} $${p.chips}`).join(' / ')}`);
       set({ players: newPlayers, pot: 0, stage: 'showdown', dealerIndex: (dealerIndex + 1) % players.length });
       return;
     }
+
+    // 比牌：亮出所有候选人的底牌与牌型
+    candidates.forEach(p => {
+      get().logAction(`${p.name} 亮牌 ${p.cards.join(' ')} (${handNameCN([...p.cards, ...board])})`);
+    });
 
     // 比较牌型大小
     let bestPlayers: Player[] = [];
@@ -454,12 +484,14 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     const newPlayers = [...players];
     const winAmount = Math.floor(pot / bestPlayers.length);
-    
+    const winHandName = handNameCN([...bestPlayers[0].cards, ...board]);
+
     bestPlayers.forEach(winner => {
       const wIdx = newPlayers.findIndex(p => p.id === winner.id);
       newPlayers[wIdx].chips += winAmount;
-      get().logAction(`${winner.name} 获胜！赢下 $${winAmount}`);
+      get().logAction(`${winner.name} 获胜！以 [${winHandName}] 赢下 $${winAmount}`);
     });
+    get().logAction(`本手结束筹码: ${newPlayers.map(p => `${p.name} $${p.chips}`).join(' / ')}`);
 
     set({ players: newPlayers, pot: 0, stage: 'showdown', dealerIndex: (dealerIndex + 1) % players.length });
   },

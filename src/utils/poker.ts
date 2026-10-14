@@ -40,6 +40,28 @@ export function evaluateHand(cards: Card[]): Hand {
   return Hand.solve(cards);
 }
 
+/** 牌型英文名 → 中文名 */
+const HAND_NAME_CN: Record<string, string> = {
+  'High Card': '高牌',
+  'Pair': '一对',
+  'Two Pair': '两对',
+  'Three of a Kind': '三条',
+  'Straight': '顺子',
+  'Flush': '同花',
+  'Full House': '葫芦',
+  'Four of a Kind': '四条',
+  'Straight Flush': '同花顺',
+  'Royal Flush': '皇家同花顺',
+};
+
+/**
+ * 评估一组牌（5~7张）的最佳牌型，返回中文名（日志与教学提示共用）
+ */
+export function handNameCN(cards: Card[]): string {
+  const name = evaluateHand(cards).name;
+  return HAND_NAME_CN[name] || name;
+}
+
 /**
  * 比较两手牌的大小
  * @returns 1 if hand1 wins, -1 if hand2 wins, 0 if tie

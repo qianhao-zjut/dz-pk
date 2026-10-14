@@ -1,6 +1,6 @@
 import React from 'react';
 import type { Card } from '../utils/poker';
-import { evaluateHand } from '../utils/poker';
+import { evaluateHand, handNameCN } from '../utils/poker';
 
 interface TeachingPanelProps {
   humanCards: Card[];
@@ -29,21 +29,9 @@ export const TeachingPanel: React.FC<TeachingPanelProps> = ({ humanCards, boardC
       currentHandStr = '翻前底牌 (Hole Cards)';
     } else {
       const evaluation = evaluateHand([...humanCards, ...boardCards]);
-      // 翻译为中文提示
-      const translatedMap: Record<string, string> = {
-        'High Card': '高牌',
-        'Pair': '一对',
-        'Two Pair': '两对',
-        'Three of a Kind': '三条',
-        'Straight': '顺子',
-        'Flush': '同花',
-        'Full House': '葫芦',
-        'Four of a Kind': '四条',
-        'Straight Flush': '同花顺',
-        'Royal Flush': '皇家同花顺'
-      };
       const engName = evaluation.name;
-      currentHandStr = `当前最大成牌：${translatedMap[engName] || engName}`;
+      // 与日志共用同一套中文牌型映射
+      currentHandStr = `当前最大成牌：${handNameCN([...humanCards, ...boardCards])}`;
       
       // 高牌和一对不算特别强，两对及以上给个高亮
       if (engName !== 'High Card' && engName !== 'Pair') {
