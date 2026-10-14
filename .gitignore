@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Runtime bankroll data (server volume)
+data/
+bankroll.json
+
+# UI audit screenshots (temp artifacts)
+.audit-shots/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

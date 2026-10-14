@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Lobby } from './components/Lobby';
 import type { TableConfig } from './components/Lobby';
 import { GameTable } from './components/GameTable';

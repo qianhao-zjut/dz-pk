@@ -134,7 +134,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       return {
         ...p,
         chips,
-        cards: [],
+        cards: [] as Card[],
         currentBet: 0,
         status: chips > 0 ? 'active' : 'sitting-out' as PlayerStatus,
         hasActed: false
@@ -231,7 +231,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   playerRaise: (totalBetAmount: number) => {
-    const { players, currentPlayerIndex, currentMaxBet, pot } = get();
+    const { players, currentPlayerIndex, pot } = get();
     const p = players[currentPlayerIndex];
     const amountToAdd = totalBetAmount - p.currentBet;
     
@@ -256,7 +256,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   advanceTurn: () => {
-    const { players, currentPlayerIndex, currentMaxBet, stage } = get();
+    const { players, currentPlayerIndex, currentMaxBet } = get();
     
     const activePlayers = players.filter(p => p.status === 'active');
     const notFoldedPlayers = players.filter(p => p.status !== 'folded');
