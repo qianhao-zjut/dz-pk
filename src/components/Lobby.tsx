@@ -21,9 +21,11 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
   const [warning, setWarning] = useState<{show: boolean; message: string; table?: TableConfig}>({ show: false, message: '' });
   const [showSetBankrollModal, setShowSetBankrollModal] = useState(false);
   const [bankrollInput, setBankrollInput] = useState(balance.toString());
+  const [bankrollError, setBankrollError] = useState('');
 
   const handleSetBankrollClick = () => {
     setBankrollInput(balance.toString());
+    setBankrollError('');
     setShowSetBankrollModal(true);
   };
 
@@ -33,7 +35,7 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
       setBankroll(amount);
       setShowSetBankrollModal(false);
     } else {
-      alert('请输入有效的正数金额！');
+      setBankrollError('请输入有效的金额（0 或正整数）');
     }
   };
 
@@ -171,14 +173,18 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
               </div>
               <p className="text-gray-300 mb-6">请输入你想设定的新总资金金额：</p>
               
-              <input 
-                type="number" 
+              <input
+                type="number"
                 value={bankrollInput}
-                onChange={(e) => setBankrollInput(e.target.value)}
-                className="w-full bg-gray-900 border border-gray-600 rounded-xl px-4 py-3 mb-8 text-white font-mono text-xl focus:outline-none focus:border-blue-500"
+                onChange={(e) => { setBankrollInput(e.target.value); setBankrollError(''); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') submitSetBankroll(); }}
+                className={`w-full bg-gray-900 border rounded-xl px-4 py-3 text-white font-mono text-xl focus:outline-none ${bankrollError ? 'border-red-500 focus:border-red-500' : 'border-gray-600 focus:border-blue-500'}`}
                 autoFocus
               />
-              
+              <div className="h-5 mt-1 mb-2">
+                {bankrollError && <p className="text-red-400 text-sm leading-5">{bankrollError}</p>}
+              </div>
+
               <div className="flex space-x-4">
                 <button 
                   onClick={() => setShowSetBankrollModal(false)}

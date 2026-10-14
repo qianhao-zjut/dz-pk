@@ -1,6 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { useBankrollStore } from '../store/bankrollStore';
+import { AlertTriangle, Coins } from 'lucide-react';
 import { CardUI } from './CardUI';
 import { TeachingPanel } from './TeachingPanel';
 
@@ -13,6 +14,11 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
   const deductFunds = useBankrollStore(state => state.deductFunds);
   const addFunds = useBankrollStore(state => state.addFunds);
   const logEndRef = useRef<HTMLDivElement>(null);
+
+  // Modal 状态（替代原生 confirm/alert）
+  const [showRebuyModal, setShowRebuyModal] = useState(false);
+  const [showBrokeModal, setShowBrokeModal] = useState(false);
+  const [showAllInModal, setShowAllInModal] = useState(false);
 
   // Auto-scroll game log
   useEffect(() => {
@@ -43,6 +49,46 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
     onLeave();
   };
 
+  // 点击 Deal / Next Hand：破产时弹 Rebuy 确认框
+  const handleDealClick = () => {
+    if (human && human.chips === 0) {
+      setShowRebuyModal(true);
+    } else {
+      startHand();
+    }
+  };
+
+  // Rebuy 确认：扣款成功则重新买入并发牌，失败则提示资金不足
+  const handleRebuyConfirm = () => {
+    setShowRebuyModal(false);
+    if (deductFunds(table.buyIn)) {
+      rebuy('human', table.buyIn);
+      startHand();
+    } else {
+      setShowBrokeModal(true);
+    }
+  };
+
+  // Rebuy 取消：直接站起离开
+  const handleRebuyCancel = () => {
+    setShowRebuyModal(false);
+    handleLeave();
+  };
+
+  // 资金不足：确认后强制离开
+  const handleBrokeLeave = () => {
+    setShowBrokeModal(false);
+    handleLeave();
+  };
+
+  // All-in 确认
+  const handleAllInConfirm = () => {
+    setShowAllInModal(false);
+    if (human) {
+      playerRaise(human.chips + human.currentBet);
+    }
+  };
+
   return (
     <div className="flex flex-col lg:flex-row h-screen bg-gray-900 text-white font-sans p-2 sm:p-4 gap-2 sm:gap-4 overflow-hidden">
       {/* 左侧/中央：主要牌桌区域 */}
@@ -61,36 +107,44 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
         {/* 牌桌渲染区 (无牌桌背景，纯净排版) */}
         <div className="flex-1 flex flex-col justify-between relative pt-16 p-2 sm:p-4 overflow-y-auto min-h-0">
           
-          {/* 顶部：人类玩家 (你的位置) */}
-          {human && (
-            <div className="flex flex-col items-center z-20 mt-2 sm:mt-4">
-              
-              <div className={`px-4 sm:px-6 py-2 rounded-xl shadow-xl text-center border ${isHumanTurn ? 'bg-yellow-600 border-yellow-400 ring-4 ring-yellow-500/50' : 'bg-gray-800 border-gray-600'} mb-2`}>
-                <div className="font-bold text-base sm:text-lg">{human.name}</div>
-                <div className="text-green-400 font-mono text-base sm:text-lg">${human.chips}</div>
-              </div>
+          {/* 顶部：AI 1 */}
+          <div className="flex justify-center z-20 mt-2 sm:mt-4">
+            {players.filter(p => p.isAI)[1] && (() => {
+              const p = players.filter(p => p.isAI)[1];
+              const pIdx = players.findIndex(player => player.id === p.id);
+              const isDealer = pIdx === dealerIndex;
+              const isCurrent = pIdx === currentPlayerIndex && stage !== 'idle' && stage !== 'showdown';
 
-              {/* 状态 / 下注 */}
-              <div className="flex items-center space-x-2 mb-2 h-6">
-                {players.findIndex(p => p.id === 'human') === dealerIndex && (
-                  <div className="w-5 h-5 sm:w-6 sm:h-6 bg-white text-black rounded-full flex items-center justify-center text-xs font-bold shadow-md">D</div>
-                )}
-                {human.currentBet > 0 && <div className="px-3 py-1 bg-yellow-600/90 rounded-full text-xs sm:text-sm font-bold border border-yellow-400 shadow-lg">${human.currentBet}</div>}
-                {human.status === 'folded' && <div className="px-2 bg-red-600/80 rounded text-xs">Folded</div>}
-                {human.status === 'all-in' && <div className="px-2 bg-red-600/80 rounded text-xs font-bold">ALL-IN</div>}
-              </div>
+              return (
+                <div className="flex flex-col items-center z-20 w-32">
+                  <div className={`px-2 sm:px-4 py-1 sm:py-2 rounded-lg shadow-lg text-center w-full mb-2 ${isCurrent ? 'bg-yellow-600 ring-4 ring-yellow-400' : 'bg-gray-800'}`}>
+                    <div className="font-bold text-xs sm:text-sm truncate">{p.name}</div>
+                    <div className="text-green-400 text-xs">${p.chips}</div>
+                  </div>
 
-              {/* 卡牌 */}
-              <div className="flex space-x-2 z-30">
-                 {(human.status === 'active' || human.status === 'all-in') && human.cards.length > 0 ? (
-                   human.cards.map((c, i) => <CardUI key={i} card={c} className="scale-75 sm:scale-100 hover:-translate-y-2 transition-transform shadow-2xl origin-top" />)
-                 ) : (
-                   <div className="h-24 sm:h-32 flex items-center text-gray-500 text-sm">等待发牌...</div>
-                 )}
-              </div>
+                  <div className="flex items-center space-x-1 sm:space-x-2 mb-2 h-6">
+                    {isDealer && <div className="w-4 h-4 sm:w-5 sm:h-5 bg-white text-black rounded-full flex items-center justify-center text-[10px] font-bold shadow-md">D</div>}
+                    {p.currentBet > 0 && <div className="px-1 sm:px-2 bg-yellow-600/80 rounded text-[10px] sm:text-xs font-bold border border-yellow-400">${p.currentBet}</div>}
+                    {p.status === 'folded' && <div className="px-1 sm:px-2 bg-red-600/80 rounded text-[10px] sm:text-xs">Folded</div>}
+                    {p.status === 'all-in' && <div className="px-1 sm:px-2 bg-red-600/80 rounded text-[10px] sm:text-xs font-bold">ALL-IN</div>}
+                  </div>
 
-            </div>
-          )}
+                  <div className="flex space-x-1">
+                    {p.status === 'active' || p.status === 'all-in' ? (
+                       stage === 'showdown' ? (
+                         p.cards.map((c, i) => <CardUI key={i} card={c} className="scale-[0.5] sm:scale-75 origin-top" />)
+                       ) : (
+                         <>
+                           <CardUI className="scale-[0.5] sm:scale-75 origin-top" />
+                           <CardUI className="scale-[0.5] sm:scale-75 origin-top" />
+                         </>
+                       )
+                    ) : <div className="h-16"></div>}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
 
           {/* 中间：AI 1、公共牌、AI 3 */}
           <div className="flex justify-between items-center w-full px-8 sm:px-16 my-1 sm:my-2 flex-1 min-h-[150px]">
@@ -198,68 +252,44 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
 
           </div>
 
-          {/* 底部：底部 AI (AI 1) */}
-          <div className="flex justify-center z-20 mb-2 sm:mb-4">
-            {players.filter(p => p.isAI)[1] && (() => {
-              const p = players.filter(p => p.isAI)[1];
-              const pIdx = players.findIndex(player => player.id === p.id);
-              const isDealer = pIdx === dealerIndex;
-              const isCurrent = pIdx === currentPlayerIndex && stage !== 'idle' && stage !== 'showdown';
-              
-              return (
-                <div className="flex flex-col items-center z-20 w-32">
-                  <div className="flex space-x-1 mb-2">
-                    {p.status === 'active' || p.status === 'all-in' ? (
-                       stage === 'showdown' ? (
-                         p.cards.map((c, i) => <CardUI key={i} card={c} className="scale-[0.5] sm:scale-75 origin-bottom" />)
-                       ) : (
-                         <>
-                           <CardUI className="scale-[0.5] sm:scale-75 origin-bottom" />
-                           <CardUI className="scale-[0.5] sm:scale-75 origin-bottom" />
-                         </>
-                       )
-                    ) : <div className="h-16"></div>}
-                  </div>
+          {/* 底部：人类玩家 (你的位置) */}
+          {human && (
+            <div className="flex flex-col items-center z-20 mb-2 sm:mb-4">
 
-                  <div className="flex items-center space-x-1 sm:space-x-2 mb-2 h-6">
-                    {isDealer && <div className="w-4 h-4 sm:w-5 sm:h-5 bg-white text-black rounded-full flex items-center justify-center text-[10px] font-bold shadow-md">D</div>}
-                    {p.currentBet > 0 && <div className="px-1 sm:px-2 bg-yellow-600/80 rounded text-[10px] sm:text-xs font-bold border border-yellow-400">${p.currentBet}</div>}
-                    {p.status === 'folded' && <div className="px-1 sm:px-2 bg-red-600/80 rounded text-[10px] sm:text-xs">Folded</div>}
-                    {p.status === 'all-in' && <div className="px-1 sm:px-2 bg-red-600/80 rounded text-[10px] sm:text-xs font-bold">ALL-IN</div>}
-                  </div>
+              {/* 卡牌 */}
+              <div className="flex space-x-2 z-30 mb-2">
+                 {(human.status === 'active' || human.status === 'all-in') && human.cards.length > 0 ? (
+                   human.cards.map((c, i) => <CardUI key={i} card={c} className="scale-75 sm:scale-100 hover:-translate-y-2 transition-transform shadow-2xl origin-bottom" />)
+                 ) : (
+                   <div className="h-24 sm:h-32 flex items-center text-gray-500 text-sm">等待发牌...</div>
+                 )}
+              </div>
 
-                  <div className={`px-2 sm:px-4 py-1 sm:py-2 rounded-lg shadow-lg text-center w-full ${isCurrent ? 'bg-yellow-600 ring-4 ring-yellow-400' : 'bg-gray-800'}`}>
-                    <div className="font-bold text-xs sm:text-sm truncate">{p.name}</div>
-                    <div className="text-green-400 text-xs">${p.chips}</div>
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
+              {/* 状态 / 下注 */}
+              <div className="flex items-center space-x-2 mb-2 h-6">
+                {players.findIndex(p => p.id === 'human') === dealerIndex && (
+                  <div className="w-5 h-5 sm:w-6 sm:h-6 bg-white text-black rounded-full flex items-center justify-center text-xs font-bold shadow-md">D</div>
+                )}
+                {human.currentBet > 0 && <div className="px-3 py-1 bg-yellow-600/90 rounded-full text-xs sm:text-sm font-bold border border-yellow-400 shadow-lg">${human.currentBet}</div>}
+                {human.status === 'folded' && <div className="px-2 bg-red-600/80 rounded text-xs">Folded</div>}
+                {human.status === 'all-in' && <div className="px-2 bg-red-600/80 rounded text-xs font-bold">ALL-IN</div>}
+              </div>
+
+              <div className={`px-4 sm:px-6 py-2 rounded-xl shadow-xl text-center border ${isHumanTurn ? 'bg-yellow-600 border-yellow-400 ring-4 ring-yellow-500/50' : 'bg-gray-800 border-gray-600'}`}>
+                <div className="font-bold text-base sm:text-lg">{human.name}</div>
+                <div className="text-green-400 font-mono text-base sm:text-lg">${human.chips}</div>
+              </div>
+
+            </div>
+          )}
 
         </div>
 
         {/* 底部操作面板 */}
         <div className="bg-gray-900 p-2 sm:p-4 border-t border-gray-700 flex justify-center items-center flex-shrink-0 min-h-[5rem] sm:min-h-[6rem] z-30">
           {stage === 'idle' || stage === 'showdown' ? (
-            <button 
-              onClick={() => {
-                if (human && human.chips === 0) {
-                  if (window.confirm(`您已经破产！是否要从大厅资金中扣除 $${table.buyIn} 重新买入 (Rebuy)？\n点击确定重新买入，点击取消站起离开。`)) {
-                    if (deductFunds(table.buyIn)) {
-                      rebuy('human', table.buyIn);
-                      startHand();
-                    } else {
-                      alert("大厅资金不足，无法重新买入！系统将让您强制离开牌桌。");
-                      handleLeave();
-                    }
-                  } else {
-                    handleLeave();
-                  }
-                } else {
-                  startHand();
-                }
-              }}
+            <button
+              onClick={handleDealClick}
               className={`px-8 py-3 rounded-xl font-bold text-lg shadow-lg transition-colors ${
                 human && human.chips === 0 
                   ? 'bg-orange-600 hover:bg-orange-500 ring-4 ring-orange-500/50' 
@@ -309,12 +339,8 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                 加注 (Raise)
               </button>
 
-              <button 
-                onClick={() => {
-                  if (human && window.confirm("确定要 All-in (全下) 吗？")) {
-                    playerRaise(human.chips + human.currentBet);
-                  }
-                }}
+              <button
+                onClick={() => setShowAllInModal(true)}
                 disabled={!isHumanTurn || (human && human.chips === 0)}
                 className={`px-4 sm:px-6 py-2 rounded-xl font-bold transition-all ${isHumanTurn && human && human.chips > 0 ? 'bg-orange-600 hover:bg-orange-500' : 'bg-gray-700 text-gray-500'}`}
               >
@@ -350,6 +376,92 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
         </div>
       </div>
 
+      {/* Rebuy 确认 Modal */}
+      {showRebuyModal && (
+        <TableModal
+          icon={<Coins size={32} className="mr-3" />}
+          iconClass="text-yellow-500"
+          title="重新买入 (Rebuy)"
+          message={`您的筹码已耗尽。是否从大厅资金中扣除 $${table.buyIn} 重新买入？`}
+          confirmText={`重新买入 $${table.buyIn}`}
+          confirmClass="bg-orange-600 hover:bg-orange-500"
+          onConfirm={handleRebuyConfirm}
+          cancelText="站起离开"
+          onCancel={handleRebuyCancel}
+        />
+      )}
+
+      {/* 资金不足提示 Modal */}
+      {showBrokeModal && (
+        <TableModal
+          icon={<AlertTriangle size={32} className="mr-3" />}
+          iconClass="text-red-500"
+          title="资金不足"
+          message="大厅资金不足，无法重新买入。您将离开牌桌。"
+          confirmText="离开牌桌"
+          confirmClass="bg-red-600 hover:bg-red-500"
+          onConfirm={handleBrokeLeave}
+        />
+      )}
+
+      {/* All-in 确认 Modal */}
+      {showAllInModal && human && (
+        <TableModal
+          icon={<AlertTriangle size={32} className="mr-3" />}
+          iconClass="text-orange-500"
+          title="All-in 确认"
+          message={`确定要全下所有筹码 ($${human.chips + human.currentBet}) 吗？`}
+          confirmText="全下 (All-in)"
+          confirmClass="bg-orange-600 hover:bg-orange-500"
+          onConfirm={handleAllInConfirm}
+          cancelText="取消"
+          onCancel={() => setShowAllInModal(false)}
+        />
+      )}
+
     </div>
   );
 };
+
+interface TableModalProps {
+  icon: React.ReactNode;
+  iconClass: string;
+  title: string;
+  message: string;
+  confirmText: string;
+  confirmClass: string;
+  onConfirm: () => void;
+  cancelText?: string;
+  onCancel?: () => void;
+}
+
+// 深色确认弹窗（与大厅 Modal 风格一致，替代原生 confirm/alert）
+const TableModal: React.FC<TableModalProps> = ({
+  icon, iconClass, title, message, confirmText, confirmClass, onConfirm, cancelText, onCancel,
+}) => (
+  <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+    <div className="bg-gray-800 rounded-2xl p-8 max-w-md w-full border border-gray-700 shadow-2xl">
+      <div className={`flex items-center mb-4 ${iconClass}`}>
+        {icon}
+        <h2 className="text-2xl font-bold">{title}</h2>
+      </div>
+      <p className="text-gray-300 leading-relaxed mb-8">{message}</p>
+      <div className="flex space-x-4">
+        {cancelText && onCancel && (
+          <button
+            onClick={onCancel}
+            className="flex-1 py-3 bg-gray-700 hover:bg-gray-600 rounded-xl font-bold transition-colors"
+          >
+            {cancelText}
+          </button>
+        )}
+        <button
+          onClick={onConfirm}
+          className={`flex-1 py-3 rounded-xl font-bold transition-colors ${confirmClass}`}
+        >
+          {confirmText}
+        </button>
+      </div>
+    </div>
+  </div>
+);
