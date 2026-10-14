@@ -202,6 +202,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       handNumber: handNumber + 1,
       gameLog: [
         `--- 第 ${handNumber + 1} 手牌开始 (庄家: ${updatedPlayers[dealerIndex].name}) ---`,
+        `牌面记法: 点数(2-9,T,J,Q,K,A)+花色(s=♠黑桃 h=♥红桃 d=♦方块 c=♣梅花)，如 Ah=红桃A`,
         ...rebuyLogs,
         `${updatedPlayers[sbIndex].name} 下小盲 $${sbAmount}, ${updatedPlayers[bbIndex].name} 下大盲 $${bbAmount}`,
         `带入筹码: ${stacksInfo}`,
