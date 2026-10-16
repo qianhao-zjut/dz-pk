@@ -12,6 +12,7 @@ const makePlayer = (overrides: Partial<Player> & { id: string }): Player => ({
   chips: 1000,
   cards: [],
   currentBet: 0,
+  invested: 0,
   status: 'active',
   hasActed: false,
   canRaise: true,
@@ -182,5 +183,221 @@ describe('每街重置', () => {
     expect(s.stage).toBe('turn');
     expect(s.lastRaiseSize).toBe(10); // 大盲
     expect(s.players.every(p => p.canRaise)).toBe(true);
+  });
+});
+
+const BOARD_DRY = ['2h', '7c', '9d', 'Jc', '8c'];
+
+/** 跟注或过牌直到摊牌。已经 all-in 的座位不得被轮到。 */
+const callOrCheckToShowdown = (forbiddenIndex: number) => {
+  const seen: number[] = [];
+  for (let i = 0; i < 24; i++) {
+    const s = useGameStore.getState();
+    if (s.stage === 'showdown') break;
+    expect(s.currentPlayerIndex).not.toBe(forbiddenIndex);
+    expect(s.players[s.currentPlayerIndex].status).toBe('active');
+    seen.push(s.currentPlayerIndex);
+    const actor = s.players[s.currentPlayerIndex];
+    if (actor.currentBet < s.currentMaxBet) useGameStore.getState().playerCall();
+    else useGameStore.getState().playerCheck();
+  }
+  expect(useGameStore.getState().stage).toBe('showdown');
+  expect(seen).not.toContain(forbiddenIndex);
+  return seen;
+};
+
+describe('本手投入与摊牌分池', () => {
+  it('不等额全下：短码只赢两边都投入的部分，超额退回', () => {
+    setupMidHand([
+      makePlayer({
+        id: 'hero', name: '你', isAI: false,
+        cards: ['As', 'Kd'], chips: 400, invested: 100, status: 'active',
+      }),
+      makePlayer({
+        id: 'short', name: '短码',
+        cards: ['Ah', 'Ad'], chips: 10, invested: 30, status: 'all-in',
+      }),
+      makePlayer({
+        id: 'folder', name: '弃牌',
+        cards: ['2c', '3d'], chips: 200, invested: 0, status: 'folded',
+      }),
+    ], { currentPlayerIndex: 0, currentMaxBet: 100, lastRaiseSize: 10, pot: 130, stage: 'river' });
+    useGameStore.setState({ board: BOARD_DRY, dealerIndex: 0 });
+
+    const before = totalChipsInSystem();
+    useGameStore.getState().handleShowdown();
+
+    const s = useGameStore.getState();
+    expect(s.pot).toBe(0);
+    expect(s.players[0].chips).toBe(470); // 只退回 70，不赢主池
+    expect(s.players[0].invested).toBe(30);
+    expect(s.players[1].chips).toBe(70); // 10 + 赢下的 60
+    expect(s.players[2].chips).toBe(200);
+    expect(totalChipsInSystem()).toBe(before);
+  });
+
+  it('边池：短码全下只赢主池，加注者赢边池', () => {
+    setupMidHand([
+      makePlayer({
+        id: 'A', cards: ['As', 'Ah'], chips: 0, invested: 10, status: 'all-in',
+      }),
+      makePlayer({
+        id: 'B', cards: ['Kd', 'Kc'], chips: 100, invested: 10,
+      }),
+      makePlayer({
+        id: 'C', cards: ['Qd', 'Qc'], chips: 100, invested: 10,
+      }),
+    ], { currentPlayerIndex: 1, currentMaxBet: 0, lastRaiseSize: 10, pot: 30, stage: 'flop' });
+    // 翻牌已在桌面；牌堆末尾两张依次是转牌、河牌
+    useGameStore.setState({
+      board: ['2s', '7c', '9d'],
+      deck: ['3c', '4s'],
+      dealerIndex: 0,
+    });
+
+    const before = totalChipsInSystem();
+    useGameStore.getState().playerRaise(50);
+    expect(useGameStore.getState().currentPlayerIndex).toBe(2);
+    expect(useGameStore.getState().players[1].invested).toBe(60);
+    useGameStore.getState().playerCall();
+
+    const afterBet = useGameStore.getState();
+    expect(afterBet.stage).toBe('turn');
+    expect(afterBet.pot).toBe(130);
+    expect(afterBet.players[0].invested).toBe(10); // 换街不清零
+    expect(afterBet.players[1].currentBet).toBe(0);
+    expect(afterBet.players[1].invested).toBe(60);
+    expect(afterBet.players[2].invested).toBe(60);
+
+    for (let i = 0; i < 8 && useGameStore.getState().stage !== 'showdown'; i++) {
+      const s = useGameStore.getState();
+      expect(s.players[s.currentPlayerIndex].status).toBe('active');
+      useGameStore.getState().playerCheck();
+    }
+
+    const s = useGameStore.getState();
+    expect(s.stage).toBe('showdown');
+    expect(s.board.join(' ')).toBe('2s 7c 9d 4s 3c');
+    expect(s.pot).toBe(0);
+    expect(s.players[0].chips).toBe(30); // 只增加主池 30
+    expect(s.players[1].chips).toBe(150); // 剩下 50，再赢边池 100
+    expect(s.players[2].chips).toBe(50); // 跟了 50，不赢这一手的池
+    expect(totalChipsInSystem()).toBe(before);
+  });
+
+  it('只剩一名未弃牌玩家时整池给他', () => {
+    setupMidHand([
+      makePlayer({ id: 'winner', cards: ['2c', '3d'], chips: 100, invested: 10, status: 'active' }),
+      makePlayer({ id: 'folded', cards: ['As', 'Ah'], chips: 50, invested: 40, status: 'folded' }),
+    ], { currentPlayerIndex: 0, currentMaxBet: 0, lastRaiseSize: 10, pot: 50, stage: 'river' });
+    useGameStore.setState({ board: BOARD_DRY });
+
+    const before = totalChipsInSystem();
+    useGameStore.getState().handleShowdown();
+
+    const s = useGameStore.getState();
+    expect(s.players[0].chips).toBe(150);
+    expect(s.players[1].chips).toBe(50);
+    expect(s.pot).toBe(0);
+    expect(totalChipsInSystem()).toBe(before);
+  });
+
+  it('平分余筹从按钮左手边开始发，弃牌玩家的投入算进底池但不能赢', () => {
+    setupMidHand([
+      makePlayer({ id: 'p0', cards: ['As', 'Kd'], chips: 100, invested: 5, status: 'active' }),
+      makePlayer({ id: 'p1', cards: ['Ah', 'Kc'], chips: 100, invested: 5, status: 'active' }),
+      makePlayer({ id: 'p2', cards: ['Qd', 'Qc'], chips: 40, invested: 5, status: 'folded' }),
+    ], { currentPlayerIndex: 0, currentMaxBet: 0, lastRaiseSize: 10, pot: 15, stage: 'river' });
+    useGameStore.setState({
+      board: ['Qh', 'Js', '9c', '4h', '2s'],
+      dealerIndex: 0,
+    });
+
+    const before = totalChipsInSystem();
+    useGameStore.getState().handleShowdown();
+
+    const s = useGameStore.getState();
+    expect(s.pot).toBe(0);
+    expect(s.players[0].chips).toBe(107);
+    expect(s.players[1].chips).toBe(108); // 按钮左手边第一个赢家拿走余下的 1
+    expect(s.players[2].chips).toBe(40);
+    expect((s.players[0].chips - 100) + (s.players[1].chips - 100)).toBe(15);
+    expect(totalChipsInSystem()).toBe(before);
+  });
+
+  it('坐出玩家即使牌最大也不分池', () => {
+    setupMidHand([
+      makePlayer({ id: 'p0', cards: ['As', 'Kd'], chips: 100, invested: 10, status: 'active' }),
+      makePlayer({ id: 'p1', cards: ['Ah', 'Ad'], chips: 0, invested: 10, status: 'all-in' }),
+      makePlayer({ id: 'out', cards: ['Js', 'Jh'], chips: 50, invested: 10, status: 'sitting-out' }),
+    ], { currentPlayerIndex: 0, currentMaxBet: 0, lastRaiseSize: 10, pot: 30, stage: 'river' });
+    useGameStore.setState({ board: BOARD_DRY, dealerIndex: 0 });
+
+    const before = totalChipsInSystem();
+    useGameStore.getState().handleShowdown();
+
+    const s = useGameStore.getState();
+    expect(s.pot).toBe(0);
+    expect(s.players[0].chips).toBe(100);
+    expect(s.players[1].chips).toBe(30);
+    expect(s.players[2].chips).toBe(50);
+    expect(totalChipsInSystem()).toBe(before);
+  });
+});
+
+describe('短码盲注', () => {
+  const startWithSeatChips = (chipsBySeat: Record<number, number>) => {
+    useGameStore.getState().joinTable(TABLE, 1000);
+    useGameStore.setState({
+      dealerIndex: 0,
+      players: useGameStore.getState().players.map((p, i) =>
+        chipsBySeat[i] === undefined ? p : { ...p, chips: chipsBySeat[i] }
+      ),
+    });
+    const before = totalChipsInSystem();
+    useGameStore.getState().startHand();
+    return before;
+  };
+
+  it('短码大盲全下，当前最高注是小盲实际下的 5', () => {
+    const before = startWithSeatChips({ 2: 3 });
+    const s = useGameStore.getState();
+
+    expect(s.players[2].status).toBe('all-in');
+    expect(s.players[2].chips).toBe(0);
+    expect(s.players[2].currentBet).toBe(3);
+    expect(s.players[2].invested).toBe(3);
+    expect(s.players[1].currentBet).toBe(5);
+    expect(s.players[1].invested).toBe(5);
+    expect(s.players[1].status).toBe('active');
+    expect(s.currentMaxBet).toBe(5);
+    expect(s.lastRaiseSize).toBe(10);
+    expect(s.currentPlayerIndex).not.toBe(2);
+
+    callOrCheckToShowdown(2);
+    expect(useGameStore.getState().players[2].status).toBe('all-in');
+    expect(useGameStore.getState().pot).toBe(0);
+    expect(totalChipsInSystem()).toBe(before);
+  });
+
+  it('短码小盲全下后，行动不会轮到他', () => {
+    const before = startWithSeatChips({ 1: 2 });
+    const s = useGameStore.getState();
+
+    expect(s.players[1].status).toBe('all-in');
+    expect(s.players[1].chips).toBe(0);
+    expect(s.players[1].currentBet).toBe(2);
+    expect(s.players[1].invested).toBe(2);
+    expect(s.players[2].chips).toBe(990);
+    expect(s.players[2].currentBet).toBe(10);
+    expect(s.players[2].status).toBe('active');
+    expect(s.currentMaxBet).toBe(10);
+    expect(s.lastRaiseSize).toBe(10);
+    expect(s.currentPlayerIndex).not.toBe(1);
+
+    callOrCheckToShowdown(1);
+    expect(useGameStore.getState().players[1].status).toBe('all-in');
+    expect(useGameStore.getState().pot).toBe(0);
+    expect(totalChipsInSystem()).toBe(before);
   });
 });

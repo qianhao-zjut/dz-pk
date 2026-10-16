@@ -13,6 +13,8 @@ export interface Player {
   chips: number;
   cards: Card[];
   currentBet: number;
+  // 本手累计投入（盲注 + 各街下注）。新手清零，换街不清
+  invested: number;
   status: PlayerStatus;
   hasActed: boolean;
   // 当前是否允许加注（面对不完整 All-in 时，已行动过的玩家只能跟注/弃牌）
@@ -89,7 +91,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   joinTable: (table: TableConfig, humanBuyIn: number) => {
     // 初始化玩家（1名人类 + 3名AI）
     const newPlayers: Player[] = [
-      { id: 'human', name: '你 (Player)', isAI: false, chips: humanBuyIn, cards: [], currentBet: 0, status: 'active', hasActed: false, canRaise: true },
+      { id: 'human', name: '你 (Player)', isAI: false, chips: humanBuyIn, cards: [], currentBet: 0, invested: 0, status: 'active', hasActed: false, canRaise: true },
     ];
     
     // 给AI加上和桌子标准买入相近的筹码
@@ -101,6 +103,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         chips: table.buyIn,
         cards: [],
         currentBet: 0,
+        invested: 0,
         status: 'active',
         hasActed: false,
         canRaise: true
@@ -156,6 +159,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         chips,
         cards: [] as Card[],
         currentBet: 0,
+        invested: 0,
         status: chips > 0 ? 'active' : 'sitting-out' as PlayerStatus,
         hasActed: false,
         canRaise: true
@@ -176,18 +180,31 @@ export const useGameStore = create<GameState>((set, get) => ({
     const bbIndex = (dealerIndex + 2) % updatedPlayers.length;
     let pot = 0;
 
+    const postBlind = (index: number, amount: number) => {
+      const player = updatedPlayers[index];
+      player.chips -= amount;
+      player.currentBet = amount;
+      player.invested += amount;
+      if (amount > 0 && player.chips === 0) {
+        player.status = 'all-in';
+      }
+    };
+
     const sbAmount = Math.min(updatedPlayers[sbIndex].chips, table.smallBlind);
-    updatedPlayers[sbIndex].chips -= sbAmount;
-    updatedPlayers[sbIndex].currentBet = sbAmount;
+    postBlind(sbIndex, sbAmount);
     pot += sbAmount;
 
     const bbAmount = Math.min(updatedPlayers[bbIndex].chips, table.bigBlind);
-    updatedPlayers[bbIndex].chips -= bbAmount;
-    updatedPlayers[bbIndex].currentBet = bbAmount;
+    postBlind(bbIndex, bbAmount);
     pot += bbAmount;
 
-    // 枪口下(UTG)先行动
-    const utgIndex = (dealerIndex + 3) % updatedPlayers.length;
+    // 枪口下(UTG)先行动；已经全下的盲注位不再轮到
+    let utgIndex = (dealerIndex + 3) % updatedPlayers.length;
+    let seek = 0;
+    while (updatedPlayers[utgIndex].status !== 'active' && seek < updatedPlayers.length) {
+      utgIndex = (utgIndex + 1) % updatedPlayers.length;
+      seek++;
+    }
 
     // 日志素材：带入筹码（盲注已扣，故加回 currentBet）、人类底牌
     const human = updatedPlayers.find(p => p.id === 'human');
@@ -202,7 +219,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       board: [],
       players: updatedPlayers,
       pot,
-      currentMaxBet: table.bigBlind,
+      // 要跟的注是实际盲注里较大的那个；短码不足一个大盲时不能把最高注抬到大盲
+      currentMaxBet: Math.max(sbAmount, bbAmount),
       lastRaiseSize: table.bigBlind,
       currentPlayerIndex: utgIndex,
       handNumber: handNumber + 1,
@@ -212,7 +230,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         ...rebuyLogs,
         `${updatedPlayers[sbIndex].name} 下小盲 $${sbAmount}, ${updatedPlayers[bbIndex].name} 下大盲 $${bbAmount}`,
         `带入筹码: ${stacksInfo}`,
-        ...(human && human.status === 'active' ? [`你的底牌: ${human.cards.join(' ')}`] : [])
+        ...(human && (human.status === 'active' || human.status === 'all-in') ? [`你的底牌: ${human.cards.join(' ')}`] : [])
       ]
     });
   },
@@ -241,6 +259,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     newPlayers[currentPlayerIndex] = { ...p, hasActed: true };
     newPlayers[currentPlayerIndex].chips -= actualCall;
     newPlayers[currentPlayerIndex].currentBet += actualCall;
+    newPlayers[currentPlayerIndex].invested += actualCall;
     if (newPlayers[currentPlayerIndex].chips === 0) {
       newPlayers[currentPlayerIndex].status = 'all-in';
     }
@@ -295,6 +314,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     newPlayers[currentPlayerIndex] = { ...p, hasActed: true };
     newPlayers[currentPlayerIndex].chips -= actualAdd;
     newPlayers[currentPlayerIndex].currentBet = newBet;
+    newPlayers[currentPlayerIndex].invested += actualAdd;
     if (newPlayers[currentPlayerIndex].chips === 0) {
       newPlayers[currentPlayerIndex].status = 'all-in';
     }
@@ -453,54 +473,118 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   handleShowdown: () => {
     const { players, board, pot, dealerIndex } = get();
-    const candidates = players.filter(p => p.status !== 'folded');
-    
-    if (candidates.length === 1) {
-      // 对手全弃牌
-      const winner = candidates[0];
-      const newPlayers = [...players];
-      const wIdx = newPlayers.findIndex(p => p.id === winner.id);
-      newPlayers[wIdx].chips += pot;
-      get().logAction(`${winner.name} 收下底池 $${pot}`);
+    const inHand = (status: PlayerStatus) => status === 'active' || status === 'all-in';
+    const contenders = players.filter(p => inHand(p.status));
+
+    const finish = (newPlayers: Player[], potLeft: number) => {
       get().logAction(`本手结束筹码: ${newPlayers.map(p => `${p.name} $${p.chips}`).join(' / ')}`);
-      set({ players: newPlayers, pot: 0, stage: 'showdown', dealerIndex: (dealerIndex + 1) % players.length });
+      set({
+        players: newPlayers,
+        pot: potLeft,
+        stage: 'showdown',
+        dealerIndex: (dealerIndex + 1) % players.length
+      });
+    };
+
+    // 只剩一人未弃牌：整池给他，不退未跟注、不切边池
+    if (contenders.length <= 1) {
+      const newPlayers = players.map(p => ({ ...p }));
+      if (contenders.length === 1) {
+        const wIdx = newPlayers.findIndex(p => p.id === contenders[0].id);
+        newPlayers[wIdx].chips += pot;
+        get().logAction(`${contenders[0].name} 收下底池 $${pot}`);
+      }
+      finish(newPlayers, contenders.length === 1 ? 0 : pot);
       return;
     }
 
-    // 比牌：亮出所有候选人的底牌与牌型
-    candidates.forEach(p => {
+    contenders.forEach(p => {
       get().logAction(`${p.name} 亮牌 ${p.cards.join(' ')} (${handNameCN([...p.cards, ...board])})`);
     });
 
-    // 比较牌型大小
-    let bestPlayers: Player[] = [];
-    
-    // 这里做最简单的比较（不支持边池边算，一次性全分配给赢家）
-    candidates.forEach(p => {
-      if (bestPlayers.length === 0) {
-        bestPlayers.push(p);
-      } else {
-        const cmp = compareHands([...p.cards, ...board], [...bestPlayers[0].cards, ...board]);
-        if (cmp === 1) {
-          bestPlayers = [p];
-        } else if (cmp === 0) {
-          bestPlayers.push(p);
+    const newPlayers = players.map(p => ({ ...p }));
+    let potLeft = pot;
+    const contributors = newPlayers.filter(p => p.invested > 0);
+
+    // 只有一个人投过钱：没有次大投入，不走退差额，整池给他
+    if (contributors.length < 2) {
+      if (contributors.length === 1) {
+        const idx = newPlayers.findIndex(p => p.id === contributors[0].id);
+        newPlayers[idx].chips += potLeft;
+        get().logAction(`${newPlayers[idx].name} 收下底池 $${potLeft}`);
+        potLeft = 0;
+      }
+      finish(newPlayers, potLeft);
+      return;
+    }
+
+    const maxInvested = Math.max(...contributors.map(p => p.invested));
+    const leaders = contributors.filter(p => p.invested === maxInvested);
+    if (leaders.length === 1) {
+      const second = Math.max(...contributors.filter(p => p.invested < maxInvested).map(p => p.invested));
+      const refund = maxInvested - second;
+      const idx = newPlayers.findIndex(p => p.id === leaders[0].id);
+      newPlayers[idx].chips += refund;
+      newPlayers[idx].invested = second;
+      potLeft -= refund;
+      get().logAction(`${newPlayers[idx].name} 收回未跟注 $${refund}`);
+    }
+
+    const levels = [...new Set(newPlayers.map(p => p.invested).filter(amount => amount > 0))].sort((a, b) => a - b);
+    let prev = 0;
+    levels.forEach((level, levelIndex) => {
+      const covered = newPlayers.filter(p => p.invested >= level).length;
+      const slice = (level - prev) * covered;
+      prev = level;
+      if (slice <= 0) return;
+
+      const eligible: number[] = [];
+      newPlayers.forEach((p, i) => {
+        if (inHand(p.status) && p.invested >= level) eligible.push(i);
+      });
+      if (eligible.length === 0) return;
+
+      let best = [eligible[0]];
+      for (let k = 1; k < eligible.length; k++) {
+        const idx = eligible[k];
+        const cmp = compareHands(
+          [...newPlayers[idx].cards, ...board],
+          [...newPlayers[best[0]].cards, ...board]
+        );
+        if (cmp === 1) best = [idx];
+        else if (cmp === 0) best.push(idx);
+      }
+
+      const base = Math.floor(slice / best.length);
+      let extra = slice - base * best.length;
+      const gain = new Map<number, number>();
+      best.forEach(idx => gain.set(idx, base));
+      if (extra > 0) {
+        const n = newPlayers.length;
+        let seat = (dealerIndex + 1) % n;
+        let guard = 0;
+        while (extra > 0 && guard < n * best.length) {
+          if (gain.has(seat)) {
+            gain.set(seat, (gain.get(seat) ?? 0) + 1);
+            extra -= 1;
+          }
+          seat = (seat + 1) % n;
+          guard += 1;
         }
       }
+
+      const tier = levels.length > 1 ? `（第 ${levelIndex + 1} 档）` : '';
+      [...best].sort((a, b) => a - b).forEach(idx => {
+        const got = gain.get(idx) ?? 0;
+        if (got <= 0) return;
+        newPlayers[idx].chips += got;
+        potLeft -= got;
+        const handName = handNameCN([...newPlayers[idx].cards, ...board]);
+        get().logAction(`${newPlayers[idx].name} 获胜！以 [${handName}] 赢下 $${got}${tier}`);
+      });
     });
 
-    const newPlayers = [...players];
-    const winAmount = Math.floor(pot / bestPlayers.length);
-    const winHandName = handNameCN([...bestPlayers[0].cards, ...board]);
-
-    bestPlayers.forEach(winner => {
-      const wIdx = newPlayers.findIndex(p => p.id === winner.id);
-      newPlayers[wIdx].chips += winAmount;
-      get().logAction(`${winner.name} 获胜！以 [${winHandName}] 赢下 $${winAmount}`);
-    });
-    get().logAction(`本手结束筹码: ${newPlayers.map(p => `${p.name} $${p.chips}`).join(' / ')}`);
-
-    set({ players: newPlayers, pot: 0, stage: 'showdown', dealerIndex: (dealerIndex + 1) % players.length });
+    finish(newPlayers, potLeft);
   },
 
   rebuy: (playerId: string, amount: number) => {

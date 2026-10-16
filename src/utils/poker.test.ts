@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createDeck, shuffleDeck, evaluateHand, compareHands } from './poker';
+import { createDeck, shuffleDeck, evaluateHand, compareHands, handNameCN } from './poker';
 
 describe('Poker Logic', () => {
   it('should create a standard 52-card deck', () => {
@@ -60,5 +60,21 @@ describe('Poker Logic', () => {
     const tie1 = ['As', 'Ks', 'Qs', 'Js', 'Ts'];
     const tie2 = ['Ah', 'Kh', 'Qh', 'Jh', 'Th'];
     expect(compareHands(tie1, tie2)).toBe(0);
+  });
+
+  it('should describe hands in Chinese with the ranks that break ties', () => {
+    expect(handNameCN(['As', 'Ks', 'Qs', 'Js', 'Ts'])).toBe('皇家同花顺');
+    expect(handNameCN(['Kh', 'Qh', 'Jh', 'Th', '9h'])).toBe('同花顺，K 高');
+    expect(handNameCN(['As', '2s', '3s', '4s', '5s'])).toBe('同花顺，5 高');
+    expect(handNameCN(['Ah', '2d', '3c', '4s', '5h'])).toBe('顺子，5 高');
+    expect(handNameCN(['As', 'Ah', 'Ad', 'Ac', 'Kc'])).toBe('四条，A');
+    expect(handNameCN(['Ts', 'Th', 'Td', 'Tc', '2c'])).toBe('四条，10');
+    expect(handNameCN(['As', 'Ac', 'Ah', 'Ks', 'Kc'])).toBe('葫芦，A 带 K');
+    expect(handNameCN(['As', 'Ks', 'Qs', 'Js', '9s'])).toBe('同花，A 高');
+    expect(handNameCN(['Kh', 'Qd', 'Jc', 'Ts', '9h'])).toBe('顺子，K 高');
+    expect(handNameCN(['As', 'Ah', 'Ad', 'Kc', 'Qh'])).toBe('三条，A');
+    expect(handNameCN(['9s', '9h', '5d', '5c', 'Ah'])).toBe('两对，9 和 5');
+    expect(handNameCN(['As', 'Ah', 'Kd', 'Qc', 'Jh'])).toBe('一对，A');
+    expect(handNameCN(['As', 'Kc', 'Qh', 'Jd', '9s'])).toBe('高牌，A');
   });
 });
