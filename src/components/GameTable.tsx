@@ -6,9 +6,9 @@ import { CardUI } from './CardUI';
 import { TeachingPanel } from './TeachingPanel';
 
 export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
-  const { 
-    table, stage, pot, board, players, currentPlayerIndex, currentMaxBet, dealerIndex,
-    startHand, playerFold, playerCheck, playerCall, playerRaise, leaveTable, actAI, gameLog, rebuy 
+  const {
+    table, stage, pot, board, players, currentPlayerIndex, currentMaxBet, lastRaiseSize, dealerIndex,
+    startHand, playerFold, playerCheck, playerCall, playerRaise, leaveTable, actAI, gameLog, rebuy
   } = useGameStore();
   
   const deductFunds = useBankrollStore(state => state.deductFunds);
@@ -19,6 +19,16 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
   const [showRebuyModal, setShowRebuyModal] = useState(false);
   const [showBrokeModal, setShowBrokeModal] = useState(false);
   const [showAllInModal, setShowAllInModal] = useState(false);
+
+  // 加注尺寸面板（滑杆 + 快捷按钮）
+  const [showRaisePanel, setShowRaisePanel] = useState(false);
+  const [raiseSize, setRaiseSize] = useState(0);
+
+  // 轮到别人行动时自动收起加注面板
+  const isHumanTurnNow = stage !== 'idle' && stage !== 'showdown' && players[currentPlayerIndex]?.id === 'human';
+  useEffect(() => {
+    if (!isHumanTurnNow) setShowRaisePanel(false);
+  }, [isHumanTurnNow]);
 
   // Auto-scroll game log
   useEffect(() => {
@@ -42,6 +52,34 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
 
   const human = players.find(p => p.id === 'human');
   const isHumanTurn = stage !== 'idle' && stage !== 'showdown' && players[currentPlayerIndex]?.id === 'human';
+
+  // 加注尺寸计算（口径：加注到的总额）
+  const humanTotal = (human?.chips || 0) + (human?.currentBet || 0);
+  // 最小加注目标：本街没人下注时为 1BB（最小下注）；有人下注时为 min-raise
+  const minRaiseTarget = currentMaxBet === 0 ? table.bigBlind : currentMaxBet + lastRaiseSize;
+  const raiseMin = Math.min(minRaiseTarget, humanTotal); // 筹码不足最小加注时只能 All-in
+  const raiseMax = humanTotal;
+  const amountToCall = Math.max(0, currentMaxBet - (human?.currentBet || 0));
+  const potAfterCall = pot + amountToCall; // 跟注后的底池（池口尺寸口径）
+  const clampRaise = (v: number) => Math.min(Math.max(v, raiseMin), raiseMax);
+  const halfPotTarget = clampRaise(currentMaxBet + Math.round(potAfterCall / 2));
+  const fullPotTarget = clampRaise(currentMaxBet + potAfterCall);
+  const raisePresets = [
+    { label: 'Min', value: raiseMin },
+    { label: '½ 底池', value: halfPotTarget },
+    { label: '满池', value: fullPotTarget },
+    { label: 'All-in', value: raiseMax },
+  ];
+
+  const openRaisePanel = () => {
+    setRaiseSize(halfPotTarget); // 默认 ½ 底池
+    setShowRaisePanel(true);
+  };
+
+  const handleRaiseConfirm = () => {
+    playerRaise(raiseSize);
+    setShowRaisePanel(false);
+  };
 
   const handleLeave = () => {
     const returnedChips = leaveTable();
@@ -300,9 +338,62 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                 ? (human && human.chips === 0 ? `重新买入 $${table.buyIn} (Rebuy)` : '下一手 (Next Hand)') 
                 : '开始游戏 (Deal)'}
             </button>
+          ) : showRaisePanel && human ? (
+            /* 加注尺寸面板：滑杆 + 快捷尺寸 + 确认/取消 */
+            <div className="flex flex-col items-center gap-2 w-full max-w-md px-2">
+              <div className="flex items-baseline gap-2">
+                <span className="text-gray-300 text-sm">{currentMaxBet === 0 ? '下注' : '加注'}到</span>
+                <span className="text-yellow-400 font-bold text-2xl">${raiseSize}</span>
+                <span className="text-gray-500 text-xs">(再投入 ${Math.max(0, raiseSize - human.currentBet)})</span>
+              </div>
+
+              <input
+                type="range"
+                min={raiseMin}
+                max={raiseMax}
+                step={1}
+                value={raiseSize}
+                disabled={raiseMin >= raiseMax}
+                onChange={(e) => setRaiseSize(Number(e.target.value))}
+                className="w-full accent-purple-500 disabled:opacity-40"
+              />
+              <div className="flex justify-between w-full text-[10px] text-gray-500 -mt-1">
+                <span>Min ${raiseMin}</span>
+                <span>All-in ${raiseMax}</span>
+              </div>
+
+              <div className="flex flex-wrap justify-center gap-2">
+                {raisePresets.map(p => (
+                  <button
+                    key={p.label}
+                    onClick={() => setRaiseSize(p.value)}
+                    className={`px-3 py-1 rounded-lg text-xs sm:text-sm font-bold transition-all ${
+                      raiseSize === p.value ? 'bg-purple-600 ring-2 ring-purple-400' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                    }`}
+                  >
+                    {p.label} ${p.value}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex gap-3 mt-1">
+                <button
+                  onClick={() => setShowRaisePanel(false)}
+                  className="px-4 sm:px-6 py-2 rounded-xl font-bold bg-gray-700 hover:bg-gray-600 transition-all"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleRaiseConfirm}
+                  className="px-4 sm:px-6 py-2 rounded-xl font-bold bg-purple-600 hover:bg-purple-500 transition-all"
+                >
+                  确认{currentMaxBet === 0 ? '下注' : '加注'} ${raiseSize}
+                </button>
+              </div>
+            </div>
           ) : (
             <div className="flex flex-wrap justify-center gap-2 sm:gap-4">
-              <button 
+              <button
                 onClick={playerFold}
                 disabled={!isHumanTurn}
                 className={`px-4 sm:px-6 py-2 rounded-xl font-bold transition-all ${isHumanTurn ? 'bg-red-600 hover:bg-red-500' : 'bg-gray-700 text-gray-500'}`}
@@ -328,11 +419,8 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                 </button>
               )}
               
-              <button 
-                onClick={() => {
-                  const raiseAmount = currentMaxBet === 0 ? table.bigBlind : currentMaxBet * 2;
-                  playerRaise(raiseAmount);
-                }}
+              <button
+                onClick={openRaisePanel}
                 disabled={!isHumanTurn || !human?.canRaise}
                 className={`px-4 sm:px-6 py-2 rounded-xl font-bold transition-all ${isHumanTurn && human?.canRaise ? 'bg-purple-600 hover:bg-purple-500' : 'bg-gray-700 text-gray-500'}`}
               >
