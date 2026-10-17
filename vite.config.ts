@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import fs from 'fs'
 import http from 'http'
 import path from 'path'
+import { handleActRequest } from './server/actQueue.mjs'
 
 // 记录库地址：本地 dev 时由 vite middleware 把 /v1/* 转发过去（与线上 nginx 反代同路径）
 const RECORDSTORE_URL = process.env.RECORDSTORE_URL || 'http://127.0.0.1:8787'
@@ -11,6 +12,15 @@ const RECORDSTORE_URL = process.env.RECORDSTORE_URL || 'http://127.0.0.1:8787'
 export default defineConfig({
   plugins: [
     react(),
+    {
+      name: 'act-api',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (handleActRequest(req, res)) return
+          next()
+        })
+      },
+    },
     {
       name: 'bankroll-api',
       configureServer(server) {

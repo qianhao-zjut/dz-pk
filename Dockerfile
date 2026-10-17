@@ -9,7 +9,7 @@ RUN npm run build
 # ---- bankroll API ----
 FROM node:22-alpine AS api
 WORKDIR /app
-COPY server/bankroll.mjs ./bankroll.mjs
+COPY server/bankroll.mjs server/actQueue.mjs ./
 ENV PORT=3001
 ENV BANKROLL_PATH=/data/bankroll.json
 EXPOSE 3001

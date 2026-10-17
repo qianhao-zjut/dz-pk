@@ -1,6 +1,7 @@
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
+import { handleActRequest } from './actQueue.mjs'
 
 const DATA = process.env.BANKROLL_PATH || '/data/bankroll.json'
 const PORT = Number(process.env.PORT || 3001)
@@ -24,6 +25,8 @@ function writeBalance(body) {
 }
 
 const server = http.createServer((req, res) => {
+  if (handleActRequest(req, res)) return
+
   const url = (req.url || '').split('?')[0]
   if (url !== '/api/bankroll' && url !== '/api/bankroll/') {
     res.writeHead(404)
