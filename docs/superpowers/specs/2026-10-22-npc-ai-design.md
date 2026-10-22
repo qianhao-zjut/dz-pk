@@ -39,6 +39,30 @@
 
 沿用现有牌桌、发牌、资金和日志流程。本次不改远程部署、资金余额或数据库，不自动发布。独立实现这些算法，不复制、逐行翻译或移植 GPLv2 Java 仓库代码。
 
+### 2.1 texaspoker 的具体借鉴点
+
+参考仓库：[wangtaoking1/texaspoker](https://github.com/wangtaoking1/texaspoker)。已审阅版本固定为 `ae7a1607147666800eb2823843f678be07dff8ed`，不能用 GitHub 页面更新时间推断代码仍在持续维护。
+
+本方案参考其设计组织；目前只完成分析和规格，尚未接入或复用任何 Java 实现。开发时先阅读下列源文件，再依据 dz-pk 的数据结构独立实现对应模块。
+
+| 原仓库模块 | 可借鉴的思路 | dz-pk 对应实现 |
+| --- | --- | --- |
+| [SuperAI.java](https://github.com/wangtaoking1/texaspoker/blob/ae7a1607147666800eb2823843f678be07dff8ed/trunk/game/works/source/utils/SuperAI.java) | 保存自己的底牌、公共牌和公开下注信息；通过 `thinkAfterHold / Flop / Turn / River` 按街拆决策 | 白名单 `observation`；翻前规则与翻牌 / 转牌 / 河牌策略分开组织 |
+| 同文件的 `getResponse()` | 将策略意图转换为统一动作响应 | `AIAction` 与 NPC executor；重新定义金额与合法性，不沿用其竞赛协议 |
+| [SelectAI.java](https://github.com/wangtaoking1/texaspoker/blob/ae7a1607147666800eb2823843f678be07dff8ed/trunk/game/works/source/AdvancedAI/SelectAI.java) | 依据 6–8 / 4–5 / 3 / 2 人选择策略 | 人数与短桌位置影响范围、权益和规则；NPC 个性另由 profile 调节，不把原类名当成个性模型 |
+| [ProbAI.java](https://github.com/wangtaoking1/texaspoker/blob/ae7a1607147666800eb2823843f678be07dff8ed/trunk/game/works/source/probability/ProbAI.java) | 翻前按对子、高牌、同花、连接性等特征分组；翻后结合牌力、跟注金额和行动位置组织规则 | `preflop.ts` 与 `strategy.ts` 的特征、分支和配置；具体范围、阈值与尺寸通过当前牌桌测试确定 |
+| [ProbabilityComputer.java](https://github.com/wangtaoking1/texaspoker/blob/ae7a1607147666800eb2823843f678be07dff8ed/trunk/game/works/source/probability/ProbabilityComputer.java) | 从已知牌之外构造对手可能底牌，比较牌力 | `equity.ts` 的未知牌集合；概率算法重新实现为补齐公共牌、多人联合抽样、平局分池 |
+
+必须保留的审计结论：
+
+- 默认 `GameClient` 实际实例化 `ProbAI`，`SelectAI` 被注释；它不是当前默认运行策略。参考时区分可用设计与实际入口。
+- 旧概率计算在翻牌 / 转牌只比较当前公共牌，没有补齐未来公共牌；`>=` 将平局计为“不输”，不能当作底池权益。多人又用单挑概率乘方，不能直接用于本方案。
+- 原策略中的概率阈值、固定盲注倍数与随机比例依赖旧概率口径，且没有针对当前 dz-pk 牌桌验证，不能原样搬用。
+- 牌型增量计算和部分条件存在已确认缺陷，例如某个翻前高牌分支重复检查第一张底牌。因此复用现有 `pokersolver`，重新实现特征与测试。
+- 三种 NPC 风格、正确边池权益、轮次防重放与计算预算是 dz-pk 的新增设计；不声称这些已经由 texaspoker 提供。
+
+完成开发时，在这张表中补充实际函数与对应测试，说明每个借鉴点怎样落到代码。这样“参考过仓库”有可检查的实现对应关系。
+
 ## 3. 已确认的接入位置
 
 | 当前文件 | 当前作用 | 接入方式 |
@@ -179,6 +203,7 @@ callCost / (pot + callCost)
 - 弃牌玩家的投入贡献池金额，但没有获胜资格。
 - 本人没有覆盖的边池不能计入可赢金额。
 - 只有一人覆盖的未跟注超额按返还处理，不算可争夺收益。
+- 分池辅助结果应分别给出可争夺池与确定返还 `refunds`；返还不乘权益，但实际回收记账不能遗漏这笔筹码。
 - 每个模拟结果按各池资格分别决定获胜者和平分份额。
 - 计算本人在这些池中的预计回收额，再减去本次 `callCost`，作为固定投入、直接摊牌假设下的参考值。
 
