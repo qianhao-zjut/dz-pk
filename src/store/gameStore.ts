@@ -1,4 +1,10 @@
 import { create } from 'zustand';
+import { emptyLive, liveTurnFrom } from '../ai/executor';
+import { toNpcSource } from '../ai/observation';
+import { profileFor } from '../ai/profiles';
+import { invalidateNpcRuntime, runNpcDecision, getNpcLimits } from '../ai/runtime';
+import type { PublicAction } from '../ai/types';
+import { isBettingStage } from '../ai/types';
 import type { Card } from '../utils/poker';
 import { createDeck, shuffleDeck, compareHands, handNameCN } from '../utils/poker';
 import type { TableConfig } from '../components/Lobby';
@@ -46,6 +52,10 @@ interface GameState {
   // 入座会话 id（joinTable 时生成）。日志推送以此区分会话：handNumber 每次入座会重置，
   // 必须 sessionId + handNumber 才能全局唯一地定位一手牌
   sessionId: string | null;
+  // 单调递增。影响决策的牌局变化都加一；只追加日志不加。
+  decisionRevision: number;
+  // 本手公开动作。换街保留并带街标记，新手重置。不含底牌。
+  streetActions: PublicAction[];
 
   // Actions
   joinTable: (table: TableConfig, humanBuyIn: number) => void;
@@ -63,13 +73,24 @@ interface GameState {
   advanceStage: () => void;
   handleShowdown: () => void;
   logAction: (msg: string) => void;
-  actAI: () => void;
+  actAI: () => Promise<void>;
   rebuy: (playerId: string, amount: number) => void;
 }
 
 const STARTING_AI_NAMES = ['德州老手', '激进小伙', '保守大叔'];
 
-export const useGameStore = create<GameState>((set, get) => ({
+export const useGameStore = create<GameState>((set, get) => {
+  const commit = (partial: Partial<GameState>) => {
+    set({ ...partial, decisionRevision: get().decisionRevision + 1 });
+  };
+  const note = (action: PublicAction | null, partial: Partial<GameState>) => {
+    commit({
+      ...partial,
+      streetActions: action ? [...get().streetActions, action] : get().streetActions,
+    });
+  };
+
+  return {
   table: null,
   stage: 'idle',
   pot: 0,
@@ -83,12 +104,15 @@ export const useGameStore = create<GameState>((set, get) => ({
   gameLog: [],
   handNumber: 0,
   sessionId: null,
+  decisionRevision: 0,
+  streetActions: [],
 
   logAction: (msg: string) => {
     set((state) => ({ gameLog: [...state.gameLog, msg] }));
   },
 
   joinTable: (table: TableConfig, humanBuyIn: number) => {
+    invalidateNpcRuntime();
     // 初始化玩家（1名人类 + 3名AI）
     const newPlayers: Player[] = [
       { id: 'human', name: '你 (Player)', isAI: false, chips: humanBuyIn, cards: [], currentBet: 0, invested: 0, status: 'active', hasActed: false, canRaise: true },
@@ -110,23 +134,25 @@ export const useGameStore = create<GameState>((set, get) => ({
       });
     });
 
-    set({
+    commit({
       table,
       players: newPlayers,
       dealerIndex: 0,
       stage: 'idle',
       handNumber: 0,
       sessionId: new Date().toISOString(),
+      streetActions: [],
       gameLog: [`你坐下了 ${table.name} 牌桌，买入 $${humanBuyIn}`]
     });
   },
 
   leaveTable: () => {
+    invalidateNpcRuntime();
     const { players } = get();
     const human = players.find(p => p.id === 'human');
     const returnedChips = human ? human.chips : 0;
     
-    set({
+    commit({
       table: null,
       stage: 'idle',
       players: [],
@@ -134,6 +160,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       board: [],
       handNumber: 0,
       sessionId: null,
+      streetActions: [],
       gameLog: []
     });
     
@@ -141,6 +168,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   startHand: () => {
+    invalidateNpcRuntime();
     const { players, dealerIndex, table, handNumber } = get();
     if (!table) return;
 
@@ -213,7 +241,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       .map(p => `${p.name} $${p.chips + p.currentBet}`)
       .join(' / ');
 
-    set({
+    commit({
       stage: 'preflop',
       deck,
       board: [],
@@ -224,6 +252,10 @@ export const useGameStore = create<GameState>((set, get) => ({
       lastRaiseSize: table.bigBlind,
       currentPlayerIndex: utgIndex,
       handNumber: handNumber + 1,
+      streetActions: [
+        { actorId: updatedPlayers[sbIndex].id, stage: 'preflop', kind: 'post', to: sbAmount },
+        { actorId: updatedPlayers[bbIndex].id, stage: 'preflop', kind: 'post', to: bbAmount },
+      ],
       gameLog: [
         `--- 第 ${handNumber + 1} 手牌开始 (庄家: ${updatedPlayers[dealerIndex].name}) ---`,
         `牌面记法: 点数(2-9,T,J,Q,K,A)+花色(s=♠黑桃 h=♥红桃 d=♦方块 c=♣梅花)，如 Ah=红桃A`,
@@ -236,14 +268,14 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   playerFold: () => {
-    const { players, currentPlayerIndex } = get();
+    const { players, currentPlayerIndex, stage } = get();
     const p = players[currentPlayerIndex];
     
     const newPlayers = [...players];
     newPlayers[currentPlayerIndex] = { ...p, status: 'folded', hasActed: true };
     
     get().logAction(`${p.name} 弃牌 (Fold)`);
-    set({ players: newPlayers });
+    note(isBettingStage(stage) ? { actorId: p.id, stage, kind: 'fold', to: null } : null, { players: newPlayers });
     get().advanceTurn();
   },
 
@@ -273,19 +305,23 @@ export const useGameStore = create<GameState>((set, get) => ({
     } else {
       get().logAction(`${p.name} 跟注 (Call) $${actualCall} (本轮补齐至 $${totalBet})`);
     }
-    set({ players: newPlayers, pot: pot + actualCall });
+    const stage = get().stage;
+    note(isBettingStage(stage) ? { actorId: p.id, stage, kind: 'call', to: null } : null, {
+      players: newPlayers,
+      pot: pot + actualCall,
+    });
     get().advanceTurn();
   },
 
   playerCheck: () => {
-    const { players, currentPlayerIndex } = get();
+    const { players, currentPlayerIndex, stage } = get();
     const p = players[currentPlayerIndex];
     
     const newPlayers = [...players];
     newPlayers[currentPlayerIndex] = { ...p, hasActed: true };
     
     get().logAction(`${p.name} 过牌 (Check)`);
-    set({ players: newPlayers });
+    note(isBettingStage(stage) ? { actorId: p.id, stage, kind: 'check', to: null } : null, { players: newPlayers });
     get().advanceTurn();
   },
 
@@ -352,12 +388,18 @@ export const useGameStore = create<GameState>((set, get) => ({
       get().logAction(`${p.name} 全下到 $${newBet} (All-in，不足最小加注额，已行动玩家不可再加注)`);
     }
 
-    set({
-      players: newPlayers,
-      pot: pot + actualAdd,
-      currentMaxBet: newMaxBet,
-      lastRaiseSize: newLastRaiseSize
-    });
+    const stage = get().stage;
+    note(
+      isBettingStage(stage)
+        ? { actorId: p.id, stage, kind: increment > 0 ? 'raise' : 'call', to: increment > 0 ? newBet : null }
+        : null,
+      {
+        players: newPlayers,
+        pot: pot + actualAdd,
+        currentMaxBet: newMaxBet,
+        lastRaiseSize: newLastRaiseSize,
+      },
+    );
     get().advanceTurn();
   },
 
@@ -394,7 +436,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       loopCount++;
     }
 
-    set({ currentPlayerIndex: nextIdx });
+    commit({ currentPlayerIndex: nextIdx });
   },
 
   advanceStage: () => {
@@ -413,7 +455,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       // 只有一人未弃牌，直接获胜
       get().logAction(`${notFolded[0].name} 赢得了底池，其他人已弃牌。`);
       newStage = 'showdown';
-      set({ stage: newStage, players: newPlayers, currentMaxBet: 0, lastRaiseSize: bb });
+      commit({ stage: newStage, players: newPlayers, currentMaxBet: 0, lastRaiseSize: bb });
       get().handleShowdown();
       return;
     }
@@ -427,7 +469,7 @@ export const useGameStore = create<GameState>((set, get) => ({
        }
        get().logAction(`玩家 All-in，直接发完公共牌: ${newBoard.join(' ')}`);
        newStage = 'showdown';
-       set({ stage: newStage, players: newPlayers, deck: newDeck, board: newBoard, currentMaxBet: 0, lastRaiseSize: bb });
+       commit({ stage: newStage, players: newPlayers, deck: newDeck, board: newBoard, currentMaxBet: 0, lastRaiseSize: bb });
        get().handleShowdown();
        return;
     }
@@ -456,7 +498,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       loopCount++;
     }
 
-    set({ 
+    commit({ 
       stage: newStage, 
       deck: newDeck, 
       board: newBoard, 
@@ -478,7 +520,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     const finish = (newPlayers: Player[], potLeft: number) => {
       get().logAction(`本手结束筹码: ${newPlayers.map(p => `${p.name} $${p.chips}`).join(' / ')}`);
-      set({
+      commit({
         players: newPlayers,
         pot: potLeft,
         stage: 'showdown',
@@ -594,45 +636,59 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (pIdx !== -1) {
       newPlayers[pIdx].chips += amount;
       get().logAction(`${newPlayers[pIdx].name} 重新买入 (Rebuy) $${amount}`);
-      set({ players: newPlayers });
+      commit({ players: newPlayers });
     }
   },
 
   actAI: () => {
-    const { players, currentPlayerIndex, currentMaxBet, lastRaiseSize, table } = get();
-    const p = players[currentPlayerIndex];
-    if (!p || !p.isAI || p.status !== 'active') return;
+    const state = get();
+    const actor = state.players[state.currentPlayerIndex];
+    if (!state.table || !actor?.isAI || actor.status !== 'active') return Promise.resolve();
+    const view = () => {
+      const current = get();
+      if (!current.table) return null;
+      return toNpcSource({
+        sessionId: current.sessionId,
+        handNumber: current.handNumber,
+        decisionRevision: current.decisionRevision,
+        stage: current.stage,
+        pot: current.pot,
+        board: current.board,
+        dealerIndex: current.dealerIndex,
+        currentPlayerIndex: current.currentPlayerIndex,
+        currentMaxBet: current.currentMaxBet,
+        lastRaiseSize: current.lastRaiseSize,
+        bigBlind: current.table.bigBlind,
+        players: current.players,
+        streetActions: current.streetActions,
+        deck: current.deck,
+        gameLog: current.gameLog,
+      });
+    };
+    const source = view();
+    if (!source) return Promise.resolve();
+    const runtimeLimits = getNpcLimits();
+    return runNpcDecision({
+      source,
+      readLive: () => {
+        const liveSource = view();
+        return liveSource ? liveTurnFrom(liveSource) : emptyLive();
+      },
+      actions: {
+        fold: () => get().playerFold(),
+        check: () => get().playerCheck(),
+        call: () => get().playerCall(),
+        raise: (raiseTo) => get().playerRaise(raiseTo),
+      },
+      profile: profileFor(actor.id),
+      options: {
+        samples: runtimeLimits.samples,
+        timeBudgetMs: runtimeLimits.timeBudgetMs,
+        batchSize: runtimeLimits.batchSize,
+        overallTimeoutMs: runtimeLimits.overallTimeoutMs,
+        yieldBetweenBatches: true,
+      },
+    }).then(() => undefined);
+  },
 
-    const amountToCall = Math.max(0, currentMaxBet - p.currentBet);
-    const bb = table ? table.bigBlind : 0;
-    // 合法加注目标：至少满足最小加注额（currentMaxBet + lastRaiseSize）
-    const raiseTarget = currentMaxBet + Math.max(bb * 3, lastRaiseSize);
-    
-    // 极简AI决策逻辑
-    const rand = Math.random();
-    
-    if (amountToCall === 0) {
-      // 没人加注
-      if (rand < 0.2 && p.canRaise) {
-        // 20% 概率加注
-        get().playerRaise(raiseTarget);
-      } else {
-        // 80% 过牌
-        get().playerCheck();
-      }
-    } else {
-      // 有人加注了
-      if (rand < 0.4) {
-        // 40% 弃牌
-        get().playerFold();
-      } else if (rand < 0.9 || !p.canRaise) {
-        // 50% 跟注（无加注权限时只能跟注）
-        get().playerCall();
-      } else {
-        // 10% 反加
-        get().playerRaise(raiseTarget);
-      }
-    }
-  }
-
-}));
+}; });

@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { useGameStore } from './gameStore';
 import type { Player } from './gameStore';
 import type { TableConfig } from '../components/Lobby';
 import { createDeck } from '../utils/poker';
+import { buildObservation, toNpcSource } from '../ai/observation';
+import { getNpcDiagnostics, getNpcLimits, resetNpcRuntimeForTests, setNpcLimits } from '../ai/runtime';
 
 const TABLE: TableConfig = { id: 'test', name: '测试桌', smallBlind: 5, bigBlind: 10, buyIn: 1000 };
 
@@ -399,5 +401,135 @@ describe('短码盲注', () => {
     expect(useGameStore.getState().players[1].status).toBe('all-in');
     expect(useGameStore.getState().pot).toBe(0);
     expect(totalChipsInSystem()).toBe(before);
+  });
+});
+
+describe('NPC 决策接入', () => {
+  const limits = getNpcLimits();
+  afterEach(() => {
+    setNpcLimits(limits);
+    resetNpcRuntimeForTests();
+  });
+
+  const npcSource = () => {
+    const state = useGameStore.getState();
+    return toNpcSource({
+      sessionId: state.sessionId,
+      handNumber: state.handNumber,
+      decisionRevision: state.decisionRevision,
+      stage: state.stage,
+      pot: state.pot,
+      board: state.board,
+      dealerIndex: state.dealerIndex,
+      currentPlayerIndex: state.currentPlayerIndex,
+      currentMaxBet: state.currentMaxBet,
+      lastRaiseSize: state.lastRaiseSize,
+      bigBlind: state.table?.bigBlind ?? 0,
+      players: state.players,
+      streetActions: state.streetActions,
+      deck: state.deck,
+      gameLog: state.gameLog,
+    });
+  };
+
+  it('只写日志不推进决策版本，成功动作会推进', () => {
+    setupMidHand([
+      makePlayer({ id: 'ai_0', currentBet: 0, chips: 1000 }),
+      makePlayer({ id: 'ai_1', currentBet: 0, chips: 1000 }),
+    ], { currentPlayerIndex: 0, currentMaxBet: 0, lastRaiseSize: 10, pot: 20, stage: 'flop' });
+    useGameStore.setState({ board: ['2c', '7d', '9h'], sessionId: 's', handNumber: 1 });
+    const before = useGameStore.getState().decisionRevision;
+    useGameStore.getState().logAction('只是教学提示');
+    expect(useGameStore.getState().decisionRevision).toBe(before);
+    useGameStore.getState().playerCheck();
+    expect(useGameStore.getState().decisionRevision).toBeGreaterThan(before);
+  });
+
+  it('翻前按自己的底牌行动，隐藏牌和诊断不进公开日志', async () => {
+    setupMidHand([
+      makePlayer({ id: 'human', isAI: false, currentBet: 10, chips: 990, cards: ['Qc', 'Qd'] }),
+      makePlayer({ id: 'ai_0', currentBet: 0, chips: 1000, cards: ['7c', '2d'] }),
+      makePlayer({ id: 'ai_1', currentBet: 0, chips: 1000, cards: ['As', 'Ad'] }),
+      makePlayer({ id: 'ai_2', currentBet: 0, chips: 1000, cards: ['7h', '2c'] }),
+    ], { currentPlayerIndex: 3, currentMaxBet: 10, lastRaiseSize: 10, pot: 15, stage: 'preflop' });
+    useGameStore.setState({
+      sessionId: 's',
+      handNumber: 1,
+      dealerIndex: 0,
+      board: [],
+      deck: ['4h', '5h', '6h'],
+      streetActions: [
+        { actorId: 'ai_0', stage: 'preflop', kind: 'post', to: 5 },
+        { actorId: 'ai_1', stage: 'preflop', kind: 'post', to: 10 },
+      ],
+    });
+
+    const first = buildObservation(npcSource());
+    useGameStore.setState({
+      deck: ['9c', '9d', '9h'],
+      players: useGameStore.getState().players.map((player) => (
+        player.id === 'human' ? { ...player, cards: ['Js', 'Jc'] } : player
+      )),
+    });
+    expect(buildObservation(npcSource())).toEqual(first);
+
+    await useGameStore.getState().actAI();
+    const folded = useGameStore.getState();
+    expect(folded.players[3].status).toBe('folded');
+    expect(folded.gameLog.join('\n')).not.toContain('preflop-open-fold');
+    expect(folded.gameLog.join('\n')).not.toContain('均匀随机');
+    expect(getNpcDiagnostics().some((item) => item.reasonCode === 'preflop-open-fold')).toBe(true);
+
+    setupMidHand([
+      makePlayer({ id: 'human', isAI: false, currentBet: 10, chips: 990 }),
+      makePlayer({ id: 'ai_0', currentBet: 0, chips: 1000 }),
+      makePlayer({ id: 'ai_1', currentBet: 0, chips: 1000 }),
+      makePlayer({ id: 'ai_2', currentBet: 0, chips: 1000, cards: ['As', 'Ad'] }),
+    ], { currentPlayerIndex: 3, currentMaxBet: 10, lastRaiseSize: 10, pot: 15, stage: 'preflop' });
+    useGameStore.setState({ sessionId: 's', handNumber: 1, dealerIndex: 0, board: [] });
+    await useGameStore.getState().actAI();
+    const raised = useGameStore.getState().players[3];
+    expect(raised.currentBet).toBeGreaterThan(10);
+    expect(raised.chips).toBeLessThan(1000);
+  });
+
+  it('连续行动、全下后摊牌和离桌不会卡死，筹码守恒', async () => {
+    setNpcLimits({ samples: 8, timeBudgetMs: 20, batchSize: 8, overallTimeoutMs: 1000 });
+    useGameStore.getState().joinTable(TABLE, 1000);
+    const before = totalChipsInSystem();
+    useGameStore.getState().startHand();
+    for (let guard = 0; guard < 48 && useGameStore.getState().stage !== 'showdown'; guard++) {
+      const state = useGameStore.getState();
+      const actor = state.players[state.currentPlayerIndex];
+      expect(actor.chips).toBeGreaterThanOrEqual(0);
+      if (actor.isAI) await state.actAI();
+      else if (actor.currentBet < state.currentMaxBet) state.playerCall();
+      else state.playerCheck();
+    }
+    expect(useGameStore.getState().stage).toBe('showdown');
+    expect(useGameStore.getState().players.every((player) => player.chips >= 0)).toBe(true);
+    expect(totalChipsInSystem()).toBe(before);
+    const humanChips = useGameStore.getState().players.find((player) => player.id === 'human')?.chips ?? -1;
+    expect(useGameStore.getState().leaveTable()).toBe(humanChips);
+    expect(useGameStore.getState().table).toBeNull();
+  });
+
+  it('河牌短码坚果会全下，而不是过牌', async () => {
+    setNpcLimits({ samples: 20, timeBudgetMs: 30, batchSize: 20, overallTimeoutMs: 1000 });
+    setupMidHand([
+      makePlayer({ id: 'human', isAI: false, chips: 500, invested: 60, cards: ['9c', '8d'] }),
+      makePlayer({ id: 'ai_0', chips: 30, invested: 60, cards: ['As', 'Ad'] }),
+    ], { currentPlayerIndex: 1, currentMaxBet: 0, lastRaiseSize: 10, pot: 120, stage: 'river' });
+    useGameStore.setState({
+      board: ['Ac', 'Ah', 'Kd', '7c', '2s'],
+      sessionId: 's',
+      handNumber: 3,
+      dealerIndex: 0,
+    });
+    await useGameStore.getState().actAI();
+    const ai = useGameStore.getState().players[1];
+    expect(ai.status).toBe('all-in');
+    expect(ai.chips).toBe(0);
+    expect(ai.currentBet).toBe(30);
   });
 });

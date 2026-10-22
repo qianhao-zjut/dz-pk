@@ -2,7 +2,7 @@
 
 日期：2026-10-22（Asia/Shanghai）
 
-状态：方案已写入，功能尚未实施。配套实施计划为 `docs/superpowers/plans/2026-10-22-npc-ai.md`。
+状态：本地 NPC v1 已实现。测量、测试和试玩记录见第 12 节。配套计划为 `docs/superpowers/plans/2026-10-22-npc-ai.md`。
 
 项目根目录：`/Users/admin/qh/aiprogram/dz-pk`。
 
@@ -43,15 +43,15 @@
 
 参考仓库：[wangtaoking1/texaspoker](https://github.com/wangtaoking1/texaspoker)。已审阅版本固定为 `ae7a1607147666800eb2823843f678be07dff8ed`，不能用 GitHub 页面更新时间推断代码仍在持续维护。
 
-本方案参考其设计组织；目前只完成分析和规格，尚未接入或复用任何 Java 实现。开发时先阅读下列源文件，再依据 dz-pk 的数据结构独立实现对应模块。
+本方案参考其设计组织，并已按 dz-pk 的数据结构独立实现。没有复制或翻译该仓库的 Java 代码。
 
 | 原仓库模块 | 可借鉴的思路 | dz-pk 对应实现 |
 | --- | --- | --- |
-| [SuperAI.java](https://github.com/wangtaoking1/texaspoker/blob/ae7a1607147666800eb2823843f678be07dff8ed/trunk/game/works/source/utils/SuperAI.java) | 保存自己的底牌、公共牌和公开下注信息；通过 `thinkAfterHold / Flop / Turn / River` 按街拆决策 | 白名单 `observation`；翻前规则与翻牌 / 转牌 / 河牌策略分开组织 |
-| 同文件的 `getResponse()` | 将策略意图转换为统一动作响应 | `AIAction` 与 NPC executor；重新定义金额与合法性，不沿用其竞赛协议 |
-| [SelectAI.java](https://github.com/wangtaoking1/texaspoker/blob/ae7a1607147666800eb2823843f678be07dff8ed/trunk/game/works/source/AdvancedAI/SelectAI.java) | 依据 6–8 / 4–5 / 3 / 2 人选择策略 | 人数与短桌位置影响范围、权益和规则；NPC 个性另由 profile 调节，不把原类名当成个性模型 |
-| [ProbAI.java](https://github.com/wangtaoking1/texaspoker/blob/ae7a1607147666800eb2823843f678be07dff8ed/trunk/game/works/source/probability/ProbAI.java) | 翻前按对子、高牌、同花、连接性等特征分组；翻后结合牌力、跟注金额和行动位置组织规则 | `preflop.ts` 与 `strategy.ts` 的特征、分支和配置；具体范围、阈值与尺寸通过当前牌桌测试确定 |
-| [ProbabilityComputer.java](https://github.com/wangtaoking1/texaspoker/blob/ae7a1607147666800eb2823843f678be07dff8ed/trunk/game/works/source/probability/ProbabilityComputer.java) | 从已知牌之外构造对手可能底牌，比较牌力 | `equity.ts` 的未知牌集合；概率算法重新实现为补齐公共牌、多人联合抽样、平局分池 |
+| [SuperAI.java](https://github.com/wangtaoking1/texaspoker/blob/ae7a1607147666800eb2823843f678be07dff8ed/trunk/game/works/source/utils/SuperAI.java) | 保存自己的底牌、公共牌和公开下注信息；通过 `thinkAfterHold / Flop / Turn / River` 按街拆决策 | `toNpcSource`、`buildObservation` 只保留自己的底牌和公开字段。翻前走 `decidePreflop`，翻牌、转牌、河牌走 `decidePostflop`。测试：`src/ai/observation.test.ts`、`src/ai/strategy.test.ts` |
+| 同文件的 `getResponse()` | 将策略意图转换为统一动作响应 | `AIAction` 由 `executeDecision` 校验后调用现有 `playerFold / Check / Call / Raise`。`runNpcDecision` 和 `actAI` 负责轮次。测试：`src/ai/runtime.test.ts`、`src/store/gameStore.test.ts` |
+| [SelectAI.java](https://github.com/wangtaoking1/texaspoker/blob/ae7a1607147666800eb2823843f678be07dff8ed/trunk/game/works/source/AdvancedAI/SelectAI.java) | 依据 6–8 / 4–5 / 3 / 2 人选择策略 | `rangeSpot`：未坐出的玩家不超过 2 人时用 `HU`；3 人时非盲注位用 `BTN`。个性来自 `ai_0 / ai_1 / ai_2`，不沿用原类名。测试：`src/ai/strategy.test.ts` |
+| [ProbAI.java](https://github.com/wangtaoking1/texaspoker/blob/ae7a1607147666800eb2823843f678be07dff8ed/trunk/game/works/source/probability/ProbAI.java) | 翻前按对子、高牌、同花、连接性等特征分组；翻后结合牌力、跟注金额和行动位置组织规则 | `profiles.ts` 的三套范围和阈值。`decidePreflop` 区分未开池、面对一次加注、面对再加注。翻后用权益、跟注额、人数、牌面和位置。测试：`src/ai/strategy.test.ts` |
+| [ProbabilityComputer.java](https://github.com/wangtaoking1/texaspoker/blob/ae7a1607147666800eb2823843f678be07dff8ed/trunk/game/works/source/probability/ProbabilityComputer.java) | 从已知牌之外构造对手可能底牌，比较牌力 | `estimateEquity`、`estimateEquityInBatches` 与 `splitPots`。补齐五张公共牌，多人联合抽样，平局记 `1/k`，不使用当前牌面比较或单挑概率乘方。测试：`src/ai/equity.test.ts` |
 
 必须保留的审计结论：
 
@@ -275,3 +275,34 @@ callCost / (pot + callCost)
 - 上述核心测试及现有测试通过，生产构建成功；新增代码无新的 lint 问题。
 - 记录采样默认值、实测耗时、已知近似及尚未实现的对手范围模型。
 - 更新实施计划的完成项和验证结果，避免把“已写 spec”当作“功能完成”。
+
+## 12. 实现记录
+
+2026-10-22 已替换 `actAI` 的随机决策。策略模块不读取 Store。`GameTable` 仍在轮到 NPC 后等待 1.5 秒再调用 `actAI`。
+
+默认预算在 `src/ai/runtime.ts`：200 次样本、40 毫秒时间预算、每批 40 次、整体超时 1000 毫秒。批次之间用 `setTimeout(0)` 让出主线程，没有加 Worker。2000 次同步抽样会超过 50 毫秒，所以生产路径不跑这么长的同步循环。
+
+测量页面是开发服务器上的 `/bench.html`。2026-10-22，Apple M3、24 GB 内存、macOS 26.6.1、Headless Chrome 155。局面是翻牌 `As Kd` 对均匀随机对手，公共牌 `2c 7d 9h`。
+
+| 对手 | 样本 | 完成样本 | 同步耗时 |
+| --- | --- | --- | --- |
+| 1 | 40 | 40 | 3.6 ms |
+| 1 | 100 | 100 | 4.0 ms |
+| 1 | 500 | 500 | 13.9 ms |
+| 1 | 2000 | 2000 | 54.8 ms |
+| 3 | 40 | 40 | 1.5 ms |
+| 3 | 100 | 100 | 4.0 ms |
+| 3 | 500 | 500 | 18.5 ms |
+| 3 | 2000 | 2000 | 72.4 ms |
+
+带让出的完整翻牌决策：1 个对手 200 次样本 5.2 ms，3 个对手 200 次 17.9 ms。3 个对手 2000 次因为多次让出，墙钟时间是 309.4 ms，这不是默认路径。40 次一批的同步计算约 1.5 ms。
+
+同一浏览器试玩了新手桌三手。人类用过牌和跟注。三个 NPC 分别出现弃牌、加注和过牌；保守风格在持有两对时连续下注，激进风格用 `6h 7h` 做了翻前加注。三手结束时四人筹码合计都是 800。界面没有脚本错误，也没有超过 50 ms 的 long task。站起后回到大厅。日志同步发出了 `/v1/records` 请求，本机记录库返回 502，失败记录留在本地队列，游戏没有卡住。队列和公开日志里没有权益或诊断理由。
+
+已知近似，不能当成强度证明：
+
+- 对手底牌按均匀随机合法组合抽取，没有对手范围模型。
+- 跟注参考值假设双方把已投入的筹码直接摊牌，不计算后续街的下注，也不计算对手弃牌概率。
+- 权益里的平分用精确的 `1/k`。真实结算仍按按钮左侧分配零头，两套规则在零头上可能差 1 个筹码。
+- 三个风格的范围、尺寸和阈值是启发式配置，不是求解出来的最优策略。
+- 全下只在有效筹码相对底池不超过 1.25 且权益至少 0.75 时允许。深码高权益走底池比例，不会直接全下。
