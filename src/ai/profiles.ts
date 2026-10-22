@@ -34,6 +34,10 @@ export interface AIProfile {
   textureCaution: number;
   positionCaution: number;
   multiwayCaution: number;
+  /** 大额档在原范围上再收紧。不在这里的手牌不能继续。 */
+  largeContinue: string[];
+  /** 高风险档的继续范围，比大额档更紧。 */
+  highRiskContinue: string[];
   charts: RangeChart;
 }
 
@@ -160,6 +164,8 @@ export const PROFILES: Record<ProfileId, AIProfile> = {
     textureCaution: 0.03,
     positionCaution: 0.02,
     multiwayCaution: 0.03,
+    largeContinue: ['TT+', 'AQs+', 'AKo'],
+    highRiskContinue: ['QQ+', 'AKs', 'AKo'],
     charts: solidChart,
   },
   ai_1: {
@@ -176,6 +182,8 @@ export const PROFILES: Record<ProfileId, AIProfile> = {
     textureCaution: 0,
     positionCaution: 0,
     multiwayCaution: 0,
+    largeContinue: ['99+', 'AJs+', 'AQo+', 'KQs'],
+    highRiskContinue: ['JJ+', 'AQs+', 'AKo'],
     charts: aggroChart,
   },
   ai_2: {
@@ -192,6 +200,8 @@ export const PROFILES: Record<ProfileId, AIProfile> = {
     textureCaution: 0.08,
     positionCaution: 0.04,
     multiwayCaution: 0.06,
+    largeContinue: ['JJ+', 'AQs+', 'AKo'],
+    highRiskContinue: ['KK+', 'AKs'],
     charts: tightChart,
   },
 };

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { UNIFORM_RANGE_ASSUMPTION, type EquityOk } from './equity';
 import { buildObservation } from './observation';
 import { PROFILES } from './profiles';
-import { decide } from './strategy';
+import { isLegalMove } from './prices';
+import { decide, inPosition } from './strategy';
 import type { AIProfile } from './profiles';
 import type { ObservationSource, SourcePlayer } from './types';
 
@@ -290,5 +291,190 @@ describe('翻后价格、价值下注和全下约束', () => {
     expect(decided.diagnosis.assumptions.some((item) => item.includes('均匀随机'))).toBe(true);
     expect(decided.diagnosis.assumptions.some((item) => item.includes('直接摊牌'))).toBe(true);
     expect(JSON.stringify(decided.decision)).not.toContain('equity');
+  });
+});
+
+describe('全下许可', () => {
+  function open(cards: string[], chips: number) {
+    return must({
+      currentPlayerIndex: 0,
+      currentMaxBet: 10,
+      players: four(0, cards, { chips }),
+    });
+  }
+
+  it('开池目标等于或超过剩余筹码时，投机牌不能全下，AA 可以', () => {
+    expect(decide(open(['7h', '6h'], 25), PROFILES.ai_0).decision.move.action).toBe('fold');
+    expect(decide(open(['7h', '6h'], 20), PROFILES.ai_0).decision.move.action).toBe('fold');
+    expect(decide(open(['As', 'Ad'], 25), PROFILES.ai_0).decision.move).toEqual({ action: 'raise', raiseTo: 25 });
+    expect(decide(open(['As', 'Ad'], 20), PROFILES.ai_0).decision.move).toEqual({ action: 'raise', raiseTo: 20 });
+  });
+
+  it('激进大盲的 A4s 诈唬不会把剩余筹码全下', () => {
+    const obs = must({
+      currentPlayerIndex: 2,
+      currentMaxBet: 30,
+      lastRaiseSize: 20,
+      pot: 40,
+      players: four(2, ['As', '4s'], { chips: 70, currentBet: 10, invested: 10 }),
+      streetActions: [{ actorId: 'human', stage: 'preflop', kind: 'raise', to: 30 }],
+    });
+    const move = decide(obs, PROFILES.ai_1, { rng: () => 0 }).decision.move;
+    expect(isLegalMove(obs, move)).toBe(true);
+    expect(move).toEqual({ action: 'fold' });
+  });
+});
+
+describe('翻前价格档', () => {
+  function facing(seatIndex: number, cards: string[], maxBet: number, heroExtra: Partial<SourcePlayer> = {}, players = four(seatIndex, cards, heroExtra)) {
+    return must({
+      currentPlayerIndex: seatIndex,
+      currentMaxBet: maxBet,
+      lastRaiseSize: 10,
+      pot: 15 + maxBet,
+      players,
+      streetActions: [{ actorId: 'ai_2', stage: 'preflop', kind: 'raise', to: maxBet }],
+    });
+  }
+
+  it('稳健按钮的 JTs 跟常规开池，面对 100BB 全下则退出', () => {
+    const small = decide(facing(0, ['Js', 'Ts'], 20, { chips: 1000 }), PROFILES.ai_0).decision.move;
+    const jammed = decide(facing(0, ['Js', 'Ts'], 1000, { chips: 1000 }), PROFILES.ai_0).decision.move;
+    expect(small).toEqual({ action: 'call' });
+    expect(jammed).toEqual({ action: 'fold' });
+  });
+
+  it('再加注跟注、价值再加注失败后的回退，以及大额诈唬都不能绕过收紧范围', () => {
+    const reraised = (maxBet: number) => must({
+      currentPlayerIndex: 0,
+      currentMaxBet: maxBet,
+      lastRaiseSize: 20,
+      players: four(0, ['Th', 'Td'], { chips: 1000 }),
+      streetActions: [
+        { actorId: 'human', stage: 'preflop', kind: 'raise', to: 20 },
+        { actorId: 'ai_1', stage: 'preflop', kind: 'raise', to: maxBet },
+      ],
+    });
+    expect(decide(reraised(40), PROFILES.ai_0).decision.move.action).toBe('call');
+    expect(decide(reraised(1000), PROFILES.ai_0).decision.move).toEqual({ action: 'fold' });
+
+    const ninetyNine = facing(0, ['9h', '9c'], 1000, { chips: 1000 });
+    expect(decide(ninetyNine, PROFILES.ai_0).decision.move).toEqual({ action: 'fold' });
+
+    const fourBet = (maxBet: number) => must({
+      currentPlayerIndex: 0,
+      currentMaxBet: maxBet,
+      lastRaiseSize: 20,
+      players: four(0, ['Th', 'Td'], { chips: 1000 }),
+      streetActions: [
+        { actorId: 'human', stage: 'preflop', kind: 'raise', to: 20 },
+        { actorId: 'ai_2', stage: 'preflop', kind: 'raise', to: maxBet },
+      ],
+    });
+    expect(decide(fourBet(40), PROFILES.ai_1).decision.move.action).toBe('raise');
+    expect(decide(fourBet(1000), PROFILES.ai_1).decision.move).toEqual({ action: 'fold' });
+
+    const bluff = facing(0, ['Ah', '5h'], 60, { chips: 1000 });
+    expect(decide(bluff, PROFILES.ai_1, { rng: () => 0.1 }).decision.move).toEqual({ action: 'fold' });
+    expect(decide(facing(0, ['7c', '2d'], 20), PROFILES.ai_1).decision.move.action).toBe('fold');
+  });
+
+  it('5BB、20BB、15% 和 50% 筹码风险按档位切换', () => {
+    const call = (cards: string[], maxBet: number, chips: number) => (
+      decide(facing(0, cards, maxBet, { chips }), PROFILES.ai_0).decision.move.action
+    );
+    expect(call(['Js', 'Ts'], 50, 1000)).toBe('call');
+    expect(call(['Js', 'Ts'], 60, 1000)).toBe('fold');
+    expect(call(['Th', 'Td'], 190, 1000)).toBe('raise');
+    expect(call(['Th', 'Td'], 200, 1000)).toBe('fold');
+    expect(call(['Js', 'Ts'], 30, 201)).toBe('call');
+    expect(call(['Js', 'Ts'], 30, 200)).toBe('fold');
+    expect(call(['Th', 'Td'], 30, 61)).toBe('raise');
+    expect(call(['Th', 'Td'], 30, 60)).toBe('fold');
+  });
+
+  it('便宜的短码主池可以跟，无资格边池不会把价格算得更松', () => {
+    const cheap = four(0, ['Js', 'Ts'], { chips: 20, currentBet: 20, invested: 20 });
+    for (const index of [1, 2, 3]) {
+      cheap[index] = { ...cheap[index], currentBet: 30, invested: 30, chips: 1000 };
+    }
+    expect(decide(facing(0, ['Js', 'Ts'], 30, {}, cheap), PROFILES.ai_0).decision.move).toEqual({ action: 'call' });
+
+    const tight = four(0, ['Js', 'Ts'], { chips: 20, currentBet: 20, invested: 20 });
+    tight[1] = { ...tight[1], currentBet: 30, invested: 30, chips: 1000 };
+    tight[2] = { ...tight[2], currentBet: 30, invested: 30, chips: 1000 };
+    const deep = tight.map((player, index) => (
+      index === 1 || index === 2 ? { ...player, invested: 5000 } : player
+    ));
+    expect(decide(facing(0, ['Js', 'Ts'], 30, {}, tight), PROFILES.ai_0).decision.move).toEqual({ action: 'fold' });
+    expect(decide(facing(0, ['Js', 'Ts'], 30, {}, deep), PROFILES.ai_0).decision.move).toEqual({ action: 'fold' });
+
+    const exactly = four(0, ['Js', 'Ts'], { chips: 40, currentBet: 80, invested: 80 });
+    exactly[1] = { ...exactly[1], currentBet: 100, invested: 100, chips: 1000 };
+    expect(decide(facing(0, ['Js', 'Ts'], 100, {}, exactly), PROFILES.ai_0).decision.move).toEqual({ action: 'call' });
+
+    const overRatio = four(0, ['Js', 'Ts'], { chips: 40, currentBet: 70, invested: 70 });
+    overRatio[1] = { ...overRatio[1], currentBet: 90, invested: 90, chips: 1000 };
+    expect(decide(facing(0, ['Js', 'Ts'], 90, {}, overRatio), PROFILES.ai_0).decision.move).toEqual({ action: 'fold' });
+
+    const overBlind = four(0, ['Js', 'Ts'], { chips: 40, currentBet: 100, invested: 100 });
+    overBlind[1] = { ...overBlind[1], currentBet: 121, invested: 121, chips: 1000 };
+    expect(decide(facing(0, ['Js', 'Ts'], 121, {}, overBlind), PROFILES.ai_0).decision.move).toEqual({ action: 'fold' });
+  });
+});
+
+describe('翻后行动位置', () => {
+  function spot(statuses: Array<'active' | 'folded' | 'all-in' | 'sitting-out'>, heroSeat: number, dealerIndex: number) {
+    return must({
+      stage: 'river',
+      board: dry,
+      pot: 80,
+      currentMaxBet: 0,
+      lastRaiseSize: 10,
+      dealerIndex,
+      currentPlayerIndex: heroSeat,
+      players: statuses.map((status, index) => seat(
+        index === 0 ? 'human' : `ai_${index - 1}`,
+        index === heroSeat ? ['7c', '2d'] : undefined,
+        { status, chips: status === 'all-in' ? 0 : 2000, invested: 40 },
+      )),
+    });
+  }
+
+  function bluff(statuses: Array<'active' | 'folded' | 'all-in' | 'sitting-out'>, heroSeat: number, dealerIndex = 0) {
+    return decide(spot(statuses, heroSeat, dealerIndex), PROFILES.ai_1, {
+      equityOverride: fakeEquity({ equity: 0.2, evReference: 10, heroEligible: 80 }),
+      rng: () => 0.15,
+    }).decision.move.action;
+  }
+
+  it('按钮还在时按钮最后行动；按钮退出后，真正最后的 active 玩家才有位置', () => {
+    const active = ['active', 'active', 'folded', 'folded'] as const;
+    expect(inPosition(spot([...active], 0, 0))).toBe(true);
+    expect(inPosition(spot([...active], 1, 0))).toBe(false);
+    expect(bluff([...active], 0)).toBe('raise');
+    expect(bluff([...active], 1)).toBe('check');
+
+    const buttonOut = ['folded', 'active', 'folded', 'active'] as const;
+    expect(inPosition(spot([...buttonOut], 1, 0))).toBe(false);
+    expect(inPosition(spot([...buttonOut], 3, 0))).toBe(true);
+    expect(bluff([...buttonOut], 1)).toBe('check');
+    expect(bluff([...buttonOut], 3)).toBe('raise');
+
+    for (const status of ['all-in', 'sitting-out'] as const) {
+      const gone = [status, 'active', 'folded', 'active'] as const;
+      expect(inPosition(spot([...gone], 1, 0))).toBe(false);
+      expect(inPosition(spot([...gone], 3, 0))).toBe(true);
+    }
+
+    const wrapped = ['active', 'folded', 'active', 'folded'] as const;
+    expect(inPosition(spot([...wrapped], 0, 3))).toBe(false);
+    expect(inPosition(spot([...wrapped], 2, 3))).toBe(true);
+    expect(inPosition(spot(['active', 'folded', 'folded', 'folded'], 0, 1))).toBe(true);
+    expect(inPosition({
+      players: [],
+      dealerIndex: 0,
+      actorSeat: 0,
+    } as unknown as ReturnType<typeof spot>)).toBe(false);
   });
 });

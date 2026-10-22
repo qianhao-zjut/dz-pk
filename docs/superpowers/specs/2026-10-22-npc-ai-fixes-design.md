@@ -2,7 +2,7 @@
 
 日期：2026-10-22（Asia/Shanghai）
 
-状态：修复规格已准备，修复代码尚未实施。
+状态：三项策略修复已实现，并已用回归测试覆盖审查反例。
 
 基线：已提交的 NPC v1，`f2a6a33c5f82d48d33a7a5b7030940b839c729b0`。
 
@@ -101,6 +101,16 @@
 `large / high-risk` 禁用翻前诈唬再加注；`normal` 仍可按原 profile 的有限频率执行。普通继续范围、风险过滤、合法性和全下许可需要同时满足，不能互相替代。价格过滤应只收紧原范围，不意外新增手牌。
 
 无需为这次修复新增翻前 Monte Carlo、大模型或对手范围学习。具体策略可以保持简单，但要证明面对 20 和 1000 筹码不再机械地作同一决定。
+
+实际采用规格中的初始护栏，没有再调数值：
+
+- `high-risk`：`stackRisk >= 0.5` 或 `raiseBB >= 20`。
+- `large`：`stackRisk >= 0.15` 或 `raiseBB > 5`。等于 5BB 仍是 `normal`。
+- `normal`：其余面对下注的情况。
+- 便宜短码例外：`callCost <= 2 * bigBlind` 且 `priceRatio <= 0.10`。`priceRatio` 的分母只累计本人有资格争夺的池。
+- 三个 profile 的 `largeContinue / highRiskContinue` 与上表一致，放在 `profiles.ts`。共用阈值在 `preflopPrice.ts` 的 `PREFLOP_PRICE`。
+
+这些仍然是风险护栏，不是求解出的最优继续范围。
 
 ## 4. 修复翻后位置判断
 

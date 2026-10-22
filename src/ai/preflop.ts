@@ -1,4 +1,5 @@
 import { handKey, isPremiumHand, rangeContains } from './cards';
+import { preflopPrice } from './preflopPrice';
 import type { AIProfile, RangeSpot } from './profiles';
 import type { AIAction, AIObservation, PublicPlayer } from './types';
 
@@ -33,6 +34,7 @@ function attemptRaise(obs: AIObservation, desired: number, shoveOk: boolean): AI
   if (!Number.isInteger(target) || target <= obs.currentMaxBet) return null;
   if (target < obs.minRaiseTo) target = obs.minRaiseTo;
   if (target > obs.maxRaiseTo) target = obs.maxRaiseTo;
+  if (target === obs.maxRaiseTo && !shoveOk) return null;
   return { action: 'raise', raiseTo: target };
 }
 
@@ -46,6 +48,11 @@ export function decidePreflop(obs: AIObservation, profile: AIProfile, rng: () =>
 
   const chart = profile.charts;
   const premium = isPremiumHand(key);
+  const price = preflopPrice(obs);
+  const allowed = price.cheapException || price.tier === 'normal' || rangeContains(
+    price.tier === 'large' ? profile.largeContinue : profile.highRiskContinue,
+    key,
+  );
   const inOpen = rangeContains(chart.open[position], key);
   const inLimp = rangeContains(chart.limpCall[position], key);
   const inCall = rangeContains(chart.callVsRaise[position], key);
@@ -55,33 +62,33 @@ export function decidePreflop(obs: AIObservation, profile: AIProfile, rng: () =>
   const inContinue = rangeContains(chart.callVsReraise[position], key);
 
   if (obs.street.raiseCount === 0) {
-    if (inOpen) {
+    if (inOpen && allowed) {
       const raised = attemptRaise(obs, obs.bigBlind * profile.openMultiple, premium);
       if (raised) return choose(raised, 'preflop-open-raise');
     }
-    if (obs.toCall > 0 && inLimp && obs.legal.canCall) return choose({ action: 'call' }, 'preflop-limp-call');
+    if (obs.toCall > 0 && inLimp && allowed && obs.legal.canCall) return choose({ action: 'call' }, 'preflop-limp-call');
     if (obs.legal.canCheck) return choose({ action: 'check' }, 'preflop-check');
     return choose({ action: 'fold' }, 'preflop-open-fold');
   }
 
   if (obs.street.raiseCount === 1) {
-    if (inThreeBet) {
+    if (inThreeBet && allowed) {
       const raised = attemptRaise(obs, obs.currentMaxBet * profile.threeBetMultiple, premium);
       if (raised) return choose(raised, 'preflop-three-bet');
-    } else if (inBluff && rng() < profile.threeBetBluffFrequency) {
+    } else if (price.tier === 'normal' && inBluff && rng() < profile.threeBetBluffFrequency) {
       const raised = attemptRaise(obs, obs.currentMaxBet * profile.threeBetMultiple, false);
       if (raised) return choose(raised, 'preflop-three-bet-bluff');
     }
-    if ((inCall || inThreeBet) && obs.legal.canCall) return choose({ action: 'call' }, 'preflop-call');
+    if ((inCall || inThreeBet) && allowed && obs.legal.canCall) return choose({ action: 'call' }, 'preflop-call');
     if (obs.legal.canCheck) return choose({ action: 'check' }, 'preflop-check');
     return choose({ action: 'fold' }, 'preflop-fold');
   }
 
-  if (inFourBet) {
+  if (inFourBet && allowed) {
     const raised = attemptRaise(obs, obs.currentMaxBet * profile.threeBetMultiple, premium);
     if (raised) return choose(raised, 'preflop-four-bet');
   }
-  if ((inContinue || inFourBet) && obs.legal.canCall) return choose({ action: 'call' }, 'preflop-call-reraise');
+  if ((inContinue || inFourBet) && allowed && obs.legal.canCall) return choose({ action: 'call' }, 'preflop-call-reraise');
   if (obs.legal.canCheck) return choose({ action: 'check' }, 'preflop-check');
   return choose({ action: 'fold' }, 'preflop-fold');
 }
