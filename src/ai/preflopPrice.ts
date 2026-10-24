@@ -15,6 +15,8 @@ export const PREFLOP_PRICE = {
 
 export type PriceTier = 'normal' | 'large' | 'high-risk';
 
+export type ActionContext = 'unopened' | 'facing-open' | 'facing-3bet' | 'facing-4bet-plus' | 'unknown';
+
 export interface PreflopPrice {
   tier: PriceTier;
   stackRisk: number | null;
@@ -22,6 +24,8 @@ export interface PreflopPrice {
   eligiblePot: number;
   priceRatio: number | null;
   cheapException: boolean;
+  actionContext: ActionContext;
+  conservativeReason: string | null;
 }
 
 /** 按实际跟注额、剩余筹码和本人能争夺的池子分档。无资格边池不计入价格。 */
@@ -45,8 +49,52 @@ export function preflopPrice(obs: AIObservation): PreflopPrice {
     && priceRatio != null
     && priceRatio <= PREFLOP_PRICE.cheapPriceRatio;
   const risk = stackRisk ?? 0;
-  let tier: PriceTier = 'normal';
-  if (risk >= PREFLOP_PRICE.highStackRisk || raiseBB >= PREFLOP_PRICE.highRaiseBB) tier = 'high-risk';
-  else if (risk >= PREFLOP_PRICE.largeStackRisk || raiseBB > PREFLOP_PRICE.largeRaiseBB) tier = 'large';
-  return { tier, stackRisk, raiseBB, eligiblePot, priceRatio, cheapException };
+  const context = actionContextOf(obs);
+  const tier = priceTier(obs, context.kind, risk, raiseBB);
+  return {
+    tier,
+    stackRisk,
+    raiseBB,
+    eligiblePot,
+    priceRatio,
+    cheapException,
+    actionContext: context.kind,
+    conservativeReason: context.conservativeReason,
+  };
+}
+
+function actionContextOf(obs: AIObservation): { kind: ActionContext; conservativeReason: string | null } {
+  const count = obs.street.fullRaiseCount;
+  if (count <= 0) return { kind: 'unopened', conservativeReason: null };
+  if (count === 1) {
+    if (obs.street.openTo == null || obs.street.openerId == null) {
+      return { kind: 'unknown', conservativeReason: '缺少完整开池信息，按保守价格处理' };
+    }
+    return { kind: 'facing-open', conservativeReason: null };
+  }
+  if (count === 2) {
+    if (obs.street.openTo == null || obs.street.threeBetTo == null) {
+      return { kind: 'unknown', conservativeReason: '缺少完整三次下注信息，按保守价格处理' };
+    }
+    return { kind: 'facing-3bet', conservativeReason: null };
+  }
+  return { kind: 'facing-4bet-plus', conservativeReason: '四注及以上保持保守价格' };
+}
+
+/** 高投入优先。普通 3bet 只在前一开池正常、约 4 倍以内、目标小于 20bb 且跟注风险小于 15% 时放开。 */
+function priceTier(obs: AIObservation, kind: ActionContext, risk: number, raiseBB: number): PriceTier {
+  if (risk >= PREFLOP_PRICE.highStackRisk || raiseBB >= PREFLOP_PRICE.highRaiseBB) return 'high-risk';
+  if (kind === 'facing-3bet' && obs.street.openTo != null && obs.bigBlind > 0) {
+    const openBb = obs.street.openTo / obs.bigBlind;
+    const threeTo = obs.street.threeBetTo ?? obs.currentMaxBet;
+    const withinMultiple = threeTo <= obs.street.openTo * 4;
+    const normalThreeBet = openBb <= PREFLOP_PRICE.largeRaiseBB
+      && withinMultiple
+      && threeTo / obs.bigBlind < PREFLOP_PRICE.highRaiseBB
+      && risk < PREFLOP_PRICE.largeStackRisk;
+    if (normalThreeBet) return 'normal';
+    return 'large';
+  }
+  if (risk >= PREFLOP_PRICE.largeStackRisk || raiseBB > PREFLOP_PRICE.largeRaiseBB) return 'large';
+  return 'normal';
 }

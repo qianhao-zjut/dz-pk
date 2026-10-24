@@ -2,8 +2,8 @@ import { writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { expandRangeToken } from './cards';
 import { eachDefendToken } from './defendLines';
-import { PROFILES } from './profiles';
-import { allCombos, continueRate, measureMatrix, renderRangeReport, rowBy } from './rangeReport';
+import { PROFILES, profileFor } from './profiles';
+import { allCombos, continueRate, measureMatrix, measureOpenedContinue, renderRangeReport, rowBy } from './rangeReport';
 
 const rows = measureMatrix();
 
@@ -53,10 +53,10 @@ describe('1326 组合范围报告', () => {
     expect(btn.aggro - btn.solid).toBeGreaterThanOrEqual(0.05);
     expect(btn.solid - btn.tight).toBeGreaterThanOrEqual(0.05);
 
-    expect(bb.solid).toBeGreaterThanOrEqual(0.35);
-    expect(bb.solid).toBeLessThanOrEqual(0.5);
-    expect(bb.aggro).toBeGreaterThanOrEqual(0.45);
-    expect(bb.aggro).toBeLessThanOrEqual(0.6);
+    expect(bb.solid).toBeGreaterThanOrEqual(0.4);
+    expect(bb.solid).toBeLessThanOrEqual(0.55);
+    expect(bb.aggro).toBeGreaterThanOrEqual(0.5);
+    expect(bb.aggro).toBeLessThanOrEqual(0.65);
     expect(bb.tight).toBeGreaterThanOrEqual(0.2);
     expect(bb.tight).toBeLessThanOrEqual(0.35);
     expect(bb.aggro - bb.solid).toBeGreaterThanOrEqual(0.05);
@@ -97,9 +97,53 @@ describe('1326 组合范围报告', () => {
     }
   });
 
+  it('100bb 大盲面对枪口和小盲落在新区间，松跟以平跟为主', () => {
+    const spots = ['bb-vs-utg-2.5-100', 'bb-vs-btn-2.5-100', 'bb-vs-sb-2.5-100'] as const;
+    const bands = {
+      'bb-vs-utg-2.5-100': { solid: [0.25, 0.4], aggro: [0.3, 0.45], loose: [0.4, 0.55] },
+      'bb-vs-btn-2.5-100': { solid: [0.4, 0.55], aggro: [0.5, 0.65], loose: [0.55, 0.7] },
+      'bb-vs-sb-2.5-100': { solid: [0.35, 0.5], aggro: [0.45, 0.6], loose: [0.5, 0.65] },
+    };
+    for (const spot of spots) {
+      const solid = keep(spot, 'ai_0');
+      const aggro = keep(spot, 'ai_1');
+      const loose = continueRate(rowBy(rows, spot, 'loose_passive').freq);
+      const band = bands[spot];
+      expect(solid).toBeGreaterThanOrEqual(band.solid[0]);
+      expect(solid).toBeLessThanOrEqual(band.solid[1]);
+      expect(aggro).toBeGreaterThanOrEqual(band.aggro[0]);
+      expect(aggro).toBeLessThanOrEqual(band.aggro[1]);
+      expect(loose).toBeGreaterThanOrEqual(band.loose[0]);
+      expect(loose).toBeLessThanOrEqual(band.loose[1]);
+      expect(aggro - solid).toBeGreaterThanOrEqual(0.05);
+      expect(loose).toBeGreaterThanOrEqual(aggro);
+      const looseFreq = rowBy(rows, spot, 'loose_passive').freq;
+      const aggroFreq = rowBy(rows, spot, 'ai_1').freq;
+      expect(looseFreq.call / (looseFreq.call + looseFreq.raise)).toBeGreaterThanOrEqual(0.7);
+      expect(aggroFreq.raise - looseFreq.raise).toBeGreaterThanOrEqual(0.05);
+    }
+    expect(profileFor('loose_passive').id).toBe('loose_passive');
+    expect(profileFor('missing').id).toBe('ai_0');
+  });
+
+  it('100bb 按钮已开池组合面对约 4 倍普通 3bet，稳健和松凶继续 30% 到 50%', () => {
+    for (const id of ['ai_0', 'ai_1'] as const) {
+      const freq = measureOpenedContinue(PROFILES[id], PROFILES[id].openMultiple * 4, 100);
+      const keepRate = freq.call + freq.raise;
+      expect(keepRate).toBeGreaterThanOrEqual(0.3);
+      expect(keepRate).toBeLessThanOrEqual(0.5);
+      expect(freq.call).toBeGreaterThan(0);
+      expect(freq.raise).toBeGreaterThan(0);
+    }
+    const short = measureOpenedContinue(PROFILES.ai_0, 10, 40);
+    const deep = measureOpenedContinue(PROFILES.ai_0, 10, 200);
+    expect(short.call + short.raise).toBeLessThan(measureOpenedContinue(PROFILES.ai_0, 10, 100).call + measureOpenedContinue(PROFILES.ai_0, 10, 100).raise);
+    expect(deep.call + deep.raise).toBeGreaterThan(0);
+  });
+
   it('报告文本带版本、分母和旧基线', () => {
     const text = renderRangeReport(rows);
-    expect(text).toContain('2026-10-24.1');
+    expect(text).toContain('2026-10-24.2');
     expect(text).toContain('1326');
     expect(text).toContain('23.68%');
     expect(text).toContain('BB 面对 BTN 2.5bb / 100bb');

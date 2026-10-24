@@ -3,7 +3,7 @@ import { estimateEquity, type EquityOk, type EquityResult } from './equity';
 import { isLegalMove } from './prices';
 import { HEURISTIC_ASSUMPTION, PREFLOP_ASSUMPTION, SHOWDOWN_ASSUMPTION, type AIProfile } from './profiles';
 import { inPosition } from './position';
-import { decidePreflop, rangeSpot, stackDepth } from './preflop';
+import { decidePreflop, rangeSpot, stackDepth, stackReference } from './preflop';
 import { preflopPrice } from './preflopPrice';
 import type { AIAction, AIDecision, AIDiagnosis, AIObservation } from './types';
 
@@ -155,6 +155,9 @@ export function decide(obs: AIObservation, profile: AIProfile, options: DecideOp
   let hand = handKey(obs.holeCards[0], obs.holeCards[1]);
   let position: string | null = rangeSpot(obs.actorSeat, obs.dealerIndex, obs.players);
 
+  const priced = obs.stage === 'preflop' ? preflopPrice(obs) : null;
+  if (priced?.conservativeReason) assumptions.push(priced.conservativeReason);
+  const reference = stackReference(obs);
   if (obs.stage === 'preflop') {
     const choice = decidePreflop(obs, profile, tracked);
     move = choice.move;
@@ -197,8 +200,11 @@ export function decide(obs: AIObservation, profile: AIProfile, options: DecideOp
     assumptions,
     handKey: hand,
     position,
-    priceTier: obs.stage === 'preflop' ? preflopPrice(obs).tier : null,
+    priceTier: priced?.tier ?? null,
     stackDepth: stackDepth(obs),
+    referenceOpponentId: reference.opponentId,
+    effectiveStackBb: reference.effectiveBb,
+    actionContext: priced?.actionContext ?? null,
     fallback: reason === 'equity-fallback',
     rngDraw,
   };

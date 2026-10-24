@@ -174,7 +174,9 @@ describe('固定种子体验', () => {
     expect(newStats.hands).toBe(HANDS);
     expect(oldStats.stealOpp).toBeGreaterThan(0);
     expect(newStats.stealOpp).toBeGreaterThan(0);
-    mkdirSync(new URL('../../docs/superpowers/reports/', import.meta.url), { recursive: true });
-    writeFileSync(new URL('../../docs/superpowers/reports/2026-10-24-experience.md', import.meta.url), render(oldStats, newStats));
+    if (process.env.WRITE_EXPERIENCE_REPORT === '1') {
+      mkdirSync(new URL('../../docs/superpowers/reports/', import.meta.url), { recursive: true });
+      writeFileSync(new URL('../../docs/superpowers/reports/2026-10-24-experience.md', import.meta.url), render(oldStats, newStats));
+    }
   }, 180000);
 });

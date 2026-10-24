@@ -1,4 +1,5 @@
 import { DEFEND, type DefendLine, type Spot } from './defendLines';
+import { threeBetBook, type ThreeBetBook } from './threeBetLines';
 import type { ProfileId } from './types';
 
 /**
@@ -48,6 +49,8 @@ export interface AIProfile {
   deepExtraOpen: Record<RangeSpot, string[]>;
   /** 按自己的位置，再按开池者位置。缺省时回退到 charts 里的统一防守。 */
   defend: Partial<Record<RangeSpot, Partial<Record<RangeSpot, DefendLine>>>>;
+  /** 面对完整 3bet。开池者、冷跟者和尚未入池的人分开。 */
+  vsThreeBet: ThreeBetBook;
 }
 
 const none: Record<RangeSpot, string[]> = { UTG: [], BTN: [], SB: [], BB: [], HU: [] };
@@ -159,6 +162,54 @@ const aggroChart: RangeChart = {
   ),
 };
 
+const looseShortOpen: RangeChart['open'] = spots(
+  ['66+', 'ATs+', 'ATo+', 'KQs', 'KQo', 'QJs', 'JTs', 'T9s'],
+  ['22+', 'A2s+', 'A7o+', 'K8s+', 'KTo+', 'Q9s+', 'QTo+', 'J9s+', 'JTo', 'T9s', '98s', '87s', '76s', '65s'],
+  ['44+', 'A5s+', 'ATo+', 'K9s+', 'KJo+', 'QTs+', 'JTs', 'T9s', '98s'],
+  ['44+', 'A5s+', 'ATo+', 'K9s+', 'KJo+', 'QTs+', 'JTs', 'T9s', '98s'],
+  ['22+', 'A2s+', 'A7o+', 'K8s+', 'KTo+', 'Q9s+', 'J9s+', 'T9s', '98s', '87s', '76s'],
+);
+
+const looseChart: RangeChart = {
+  open: spots(
+    ['55+', 'A9s+', 'ATo+', 'KTs+', 'KJo+', 'QTs+', 'QJo', 'JTs', 'T9s', '98s'],
+    ['22+', 'A2s+', 'A2o+', 'K5s+', 'K8o+', 'Q8s+', 'Q9o+', 'J8s+', 'J9o+', 'T8s+', '97s+', '86s+', '75s+', '65s', '64s', '54s'],
+    ['22+', 'A2s+', 'A8o+', 'K8s+', 'KTo+', 'Q9s+', 'QTo+', 'J9s+', 'T9s', '98s', '87s', '76s', '65s'],
+    ['22+', 'A2s+', 'A5o+', 'K7s+', 'KTo+', 'Q9s+', 'J9s+', 'T8s+', '97s+', '86s+', '75s+', '65s'],
+    ['22+', 'A2s+', 'A5o+', 'K6s+', 'KTo+', 'Q8s+', 'J8s+', 'T8s+', '97s+', '86s+', '76s'],
+  ),
+  limpCall: spots(
+    ['66+', 'A9s+', 'ATo+', 'KTs+', 'QTs+', 'JTs', 'T9s'],
+    ['22+', 'A2s+', 'A8o+', 'K9s+', 'KTo+', 'Q9s+', 'J9s+', 'T9s', '98s', '87s'],
+    ['22+', 'A2s+', 'A2o+', 'K5s+', 'K9o+', 'Q8s+', 'J8s+', 'T8s+', '97s+', '86s+', '76s', '65s', '54s'],
+    ['22+', 'A2s+', 'A2o+', 'K2s+', 'K8o+', 'Q8s+', 'J8s+', 'T8s+', '97s+', '86s+', '76s', '65s', '54s'],
+    [],
+  ),
+  callVsRaise: spots(
+    ['55+', 'A8s+', 'ATo+', 'KTs+', 'KJo+', 'QTs+', 'JTs', 'T9s', '98s'],
+    ['22+', 'A2s+', 'A8o+', 'K9s+', 'KTo+', 'Q9s+', 'J9s+', 'T9s', '98s', '87s', '76s'],
+    ['44+', 'A5s+', 'ATo+', 'KTs+', 'KJo+', 'QTs+', 'JTs', 'T9s', '98s'],
+    ['22+', 'A2s+', 'A5o+', 'K8s+', 'KTo+', 'Q9s+', 'J9s+', 'T8s+', '98s', '87s', '76s', '65s'],
+    ['22+', 'A2s+', 'A7o+', 'K9s+', 'KTo+', 'Q9s+', 'J9s+', 'T9s', '98s'],
+  ),
+  threeBet: spots(
+    ['QQ+', 'AKs', 'AKo'],
+    ['JJ+', 'AQs+', 'AKo'],
+    ['QQ+', 'AKs', 'AKo'],
+    ['JJ+', 'AQs+', 'AKo', 'KQs'],
+    ['TT+', 'AQs+', 'AKo'],
+  ),
+  threeBetBluff: none,
+  fourBet: spots(['KK+', 'AKs'], ['QQ+', 'AKs', 'AKo'], ['KK+', 'AKs'], ['QQ+', 'AKs', 'AKo'], ['JJ+', 'AKs', 'AKo']),
+  callVsReraise: spots(
+    ['QQ', 'JJ', 'TT', 'AQs', 'AKo', 'AJs', 'KQs'],
+    ['JJ', 'TT', '99', 'AQs', 'AJs', 'ATs', 'KQs', 'QJs', 'JTs'],
+    ['JJ', 'TT', 'AQs', 'AKo', 'KQs'],
+    ['TT', '99', '88', 'AQs', 'AJs', 'AKo', 'KQs', 'QJs'],
+    ['TT', '99', 'AQs', 'AJs', 'KQs', 'QJs'],
+  ),
+};
+
 const tightChart: RangeChart = {
   open: spots(
     ['TT+', 'AQs+', 'AKo'],
@@ -203,10 +254,11 @@ export const PROFILES: Record<ProfileId, AIProfile> = {
     shortOpen: solidShortOpen,
     deepExtraOpen: spots(['A9s', 'KJo'], ['A3o', 'A2o', 'K8o', 'Q8o', '43s'], [], [], []),
     defend: DEFEND.ai_0,
+    vsThreeBet: threeBetBook(solidChart, 'ai_0'),
   },
   ai_1: {
     id: 'ai_1',
-    label: '激进',
+    label: '松凶',
     openMultiple: 3.5,
     reraiseInPosition: 3,
     reraiseOutOfPosition: 4,
@@ -225,6 +277,7 @@ export const PROFILES: Record<ProfileId, AIProfile> = {
     shortOpen: aggroShortOpen,
     deepExtraOpen: spots([], ['K4o', 'K3o', 'K2o', 'Q7o', '32s'], [], [], []),
     defend: DEFEND.ai_1,
+    vsThreeBet: threeBetBook(aggroChart, 'ai_1'),
   },
   ai_2: {
     id: 'ai_2',
@@ -247,14 +300,37 @@ export const PROFILES: Record<ProfileId, AIProfile> = {
     shortOpen: tightShortOpen,
     deepExtraOpen: spots([], ['33', '22', 'A8s', 'A7s', 'A8o', 'K9o', '65s'], [], [], []),
     defend: DEFEND.ai_2,
+    vsThreeBet: threeBetBook(tightChart, 'ai_2'),
+  },
+  loose_passive: {
+    id: 'loose_passive',
+    label: '松跟',
+    openMultiple: 2.5,
+    reraiseInPosition: 3,
+    reraiseOutOfPosition: 3.5,
+    callCushionFraction: -0.08,
+    valueEquity: 0.58,
+    strongEquity: 0.74,
+    bluffFrequency: 0.04,
+    threeBetBluffFrequency: 0.08,
+    betFraction: 0.55,
+    textureCaution: 0.02,
+    positionCaution: 0.01,
+    multiwayCaution: 0.01,
+    largeContinue: ['TT+', 'AQs+', 'AKo'],
+    highRiskContinue: ['QQ+', 'AKs', 'AKo'],
+    charts: looseChart,
+    shortOpen: looseShortOpen,
+    deepExtraOpen: spots(['A9s', 'KJo', 'QJs'], ['A3o', 'K9o', 'Q9o', 'JTo', '43s'], ['A7o', 'K9o'], ['A4o', 'K8s'], []),
+    defend: DEFEND.loose_passive,
+    vsThreeBet: threeBetBook(looseChart, 'loose_passive'),
   },
 };
 
-export const RANGE_CONFIG_VERSION = '2026-10-24.1';
+export const RANGE_CONFIG_VERSION = '2026-10-24.2';
 
 export function profileFor(id: string): AIProfile {
-  if (id === 'ai_0' || id === 'ai_1' || id === 'ai_2') return PROFILES[id];
-  return PROFILES.ai_0;
+  return PROFILES[id as ProfileId] ?? PROFILES.ai_0;
 }
 
 export const HEURISTIC_ASSUMPTION = '范围、阈值和尺寸是可调整的启发式参数，不是已验证最优解';

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useBankrollStore } from '../store/bankrollStore';
 import { useHandHistoryStore } from '../store/handHistoryStore';
 import { retryFailedHandReviews, useHandReviewSyncStatus } from '../store/handReviewSync';
-import { bankrollAdvice, LEVELS, SCENARIOS, tableFromSelection, type BuyInDepth, type OpponentMix, type ScenarioId, type TableConfig } from '../game/sessionConfig';
+import { bankrollAdvice, LEVELS, mixSummary, SCENARIOS, tableFromSelection, type BuyInDepth, type OpponentMix, type ScenarioId, type TableConfig } from '../game/sessionConfig';
 import { HandReview } from './HandReview';
 import { Coins, AlertTriangle, Play, RotateCcw, Settings } from 'lucide-react';
 
@@ -126,6 +126,7 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
             ))}
           </div>
           <p className="text-xs text-gray-400">深度是开局推荐值，打过几手后有效筹码会变化。改变这里的选项不会扣钱。</p>
+          <p className="text-xs text-gray-300">{mixSummary(opponents)}</p>
           <label className="flex items-center gap-2 text-sm text-gray-300">
             <input type="checkbox" checked={autoOpenReview} onChange={(event) => setAutoOpenReview(event.target.checked)} />
             每手结束自动展开回顾

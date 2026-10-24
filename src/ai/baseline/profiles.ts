@@ -1,5 +1,6 @@
 // 冻结在 802980b 的旧范围表，只给体验对照使用。
-import type { ProfileId } from '../types';
+/** 冻结对照只含改松跟之前的三种策略，不随主配置的策略 ID 扩展。 */
+export type BaselineProfileId = 'ai_0' | 'ai_1' | 'ai_2';
 
 /**
  * 四人桌范围和阈值都是启发式，不是已验证的最优解。
@@ -19,7 +20,7 @@ export interface RangeChart {
 }
 
 export interface AIProfile {
-  id: ProfileId;
+  id: BaselineProfileId;
   label: string;
   /** 开池加到几个大盲 */
   openMultiple: number;
@@ -150,7 +151,7 @@ const tightChart: RangeChart = {
   callVsReraise: spots(['QQ', 'AKo'], ['JJ', 'AQs', 'AKo'], ['QQ', 'AKo'], ['JJ', 'QQ', 'AQs', 'AKo'], ['JJ', 'AQs', 'AKo']),
 };
 
-export const PROFILES: Record<ProfileId, AIProfile> = {
+export const PROFILES: Record<BaselineProfileId, AIProfile> = {
   ai_0: {
     id: 'ai_0',
     label: '稳健',

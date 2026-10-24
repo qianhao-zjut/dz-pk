@@ -99,7 +99,16 @@ describe('observation 信息边界', () => {
     }));
     expect(built.ok).toBe(true);
     if (!built.ok) return;
-    expect(built.observation.street).toEqual({ raiseCount: 1, lastRaiserId: 'human' });
+    expect(built.observation.street).toEqual({
+      raiseCount: 1,
+      lastRaiserId: 'human',
+      fullRaiseCount: 1,
+      lastFullRaiserId: 'human',
+      openerId: 'human',
+      openTo: 30,
+      threeBetActorId: null,
+      threeBetTo: null,
+    });
   });
 });
 

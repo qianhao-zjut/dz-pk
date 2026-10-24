@@ -3,6 +3,7 @@ import type { DefendLine } from './defendLines';
 import { inPosition } from './position';
 import { preflopPrice } from './preflopPrice';
 import type { AIProfile, RangeSpot } from './profiles';
+import type { ThreeBetRole } from './threeBetLines';
 import type { AIAction, AIObservation, PublicPlayer } from './types';
 
 export interface PreflopChoice {
@@ -37,19 +38,46 @@ export function rangeSpot(seat: number, dealerIndex: number, players: readonly P
 
 export type StackDepth = 'short' | 'standard' | 'deep';
 
-/** 有效筹码按仍在牌局中的对手计算，弃牌玩家不把深度压短。 */
-export function effectiveStackBb(obs: AIObservation): number {
-  if (obs.bigBlind <= 0) return 100;
+export interface StackReference {
+  opponentId: string | null;
+  effectiveBb: number;
+}
+
+function stackTotal(player: Pick<PublicPlayer, 'chips' | 'currentBet'>): number {
+  return player.chips + player.currentBet;
+}
+
+/** 面对完整加注时参考该加注者；未开池时用仍可行动对手里本人能参与的最大有效深度。 */
+export function stackReference(obs: AIObservation): StackReference {
+  if (obs.bigBlind <= 0) return { opponentId: null, effectiveBb: 100 };
   const hero = obs.players.find((player) => player.id === obs.actorId);
-  if (!hero) return 100;
-  const heroStack = hero.chips + hero.currentBet;
-  const opponents = obs.players.filter((player) => (
+  if (!hero) return { opponentId: null, effectiveBb: 100 };
+  const heroStack = stackTotal(hero);
+  const inHand = obs.players.filter((player) => (
     player.id !== obs.actorId && (player.status === 'active' || player.status === 'all-in')
   ));
-  const oppStack = opponents.length > 0
-    ? Math.min(...opponents.map((player) => player.chips + player.currentBet))
-    : heroStack;
-  return Math.min(heroStack, oppStack) / obs.bigBlind;
+  const covered = (player: PublicPlayer) => Math.min(heroStack, stackTotal(player));
+  const fullRaiserId = obs.street.lastFullRaiserId;
+  if (fullRaiserId) {
+    const raiser = inHand.find((player) => player.id === fullRaiserId);
+    if (raiser) return { opponentId: raiser.id, effectiveBb: covered(raiser) / obs.bigBlind };
+  }
+  const active = inHand.filter((player) => player.status === 'active');
+  const pool = active.length > 0 ? active : inHand;
+  if (pool.length === 0) return { opponentId: null, effectiveBb: heroStack / obs.bigBlind };
+  if (active.length === 0) {
+    const topBet = Math.max(...pool.map((player) => player.currentBet));
+    const matching = pool.filter((player) => player.currentBet === topBet);
+    const best = matching.reduce((left, right) => (covered(right) > covered(left) ? right : left));
+    return { opponentId: best.id, effectiveBb: covered(best) / obs.bigBlind };
+  }
+  const best = pool.reduce((left, right) => (covered(right) > covered(left) ? right : left));
+  return { opponentId: best.id, effectiveBb: covered(best) / obs.bigBlind };
+}
+
+/** 有效筹码按定价对手计算。弃牌、坐出和无关的短不足额全下不把深筹压短。 */
+export function effectiveStackBb(obs: AIObservation): number {
+  return stackReference(obs).effectiveBb;
 }
 
 export function stackDepth(obs: AIObservation): StackDepth {
@@ -60,7 +88,7 @@ export function stackDepth(obs: AIObservation): StackDepth {
 }
 
 export function coldCallerCount(obs: AIObservation): number {
-  const raiserId = obs.street.lastRaiserId;
+  const raiserId = obs.street.lastFullRaiserId ?? obs.street.lastRaiserId;
   return obs.players.filter((player) => (
     player.id !== obs.actorId
     && player.id !== raiserId
@@ -79,7 +107,7 @@ function seatForSpot(obs: AIObservation, spot: RangeSpot): number | null {
 }
 
 export function voluntaryLimpCount(obs: AIObservation): number {
-  if (obs.street.raiseCount > 0 || obs.bigBlind <= 0) return 0;
+  if (obs.street.fullRaiseCount > 0 || obs.street.raiseCount > 0 || obs.bigBlind <= 0) return 0;
   const bbSeat = seatForSpot(obs, 'BB');
   return obs.players.filter((player) => (
     player.id !== obs.actorId
@@ -111,7 +139,7 @@ function attemptRaise(obs: AIObservation, desired: number, shoveOk: boolean): AI
 }
 
 function openerSpot(obs: AIObservation): RangeSpot | null {
-  const id = obs.street.lastRaiserId;
+  const id = obs.street.openerId ?? obs.street.lastFullRaiserId ?? obs.street.lastRaiserId;
   if (!id) return null;
   const opener = obs.players.find((player) => player.id === id);
   if (!opener) return null;
@@ -227,6 +255,40 @@ function facingRaise(obs: AIObservation, profile: AIProfile, key: string): Prefl
   return passive(obs, 'preflop-fold');
 }
 
+function threeBetRole(obs: AIObservation): ThreeBetRole {
+  if (obs.street.openerId && obs.street.openerId === obs.actorId) return 'opener';
+  const hero = obs.players.find((player) => player.id === obs.actorId);
+  const openTo = obs.street.openTo ?? 0;
+  if (hero && openTo > 0 && hero.currentBet >= openTo) return 'coldCaller';
+  return 'cold';
+}
+
+function facingThreeBet(obs: AIObservation, profile: AIProfile, key: string): PreflopBranch[] {
+  const position = rangeSpot(obs.actorSeat, obs.dealerIndex, obs.players);
+  const price = preflopPrice(obs);
+  const depth = stackDepth(obs);
+  const premium = isPremiumHand(key);
+  const spotLine = profile.vsThreeBet[threeBetRole(obs)][position];
+  const allowed = price.cheapException || price.tier === 'normal' || rangeContains(
+    price.tier === 'large' ? profile.largeContinue : profile.highRiskContinue,
+    key,
+  );
+  if (!allowed) return passive(obs, 'preflop-fold');
+  const inRaise = rangeContains(spotLine.raise, key);
+  const inCall = rangeContains(spotLine.call, key) || (depth === 'deep' && rangeContains(spotLine.deepCall, key));
+  const desired = obs.currentMaxBet * reraiseMultiple(obs, profile);
+  if (inRaise) {
+    const raised = attemptRaise(obs, desired, premium);
+    if (raised) return only(raised, 'preflop-four-bet');
+    if (obs.legal.canCall) return only({ action: 'call' }, 'preflop-call-3bet');
+    return passive(obs, 'preflop-fold');
+  }
+  if (inCall && obs.legal.canCall && (depth !== 'short' || rangeContains(spotLine.shortCall, key))) {
+    return only({ action: 'call' }, 'preflop-call-3bet');
+  }
+  return passive(obs, 'preflop-fold');
+}
+
 export function preflopBranches(obs: AIObservation, profile: AIProfile): PreflopBranch[] {
   const key = handKey(obs.holeCards[0], obs.holeCards[1]);
   if (!key) return passive(obs, 'preflop-fold');
@@ -241,7 +303,8 @@ export function preflopBranches(obs: AIObservation, profile: AIProfile): Preflop
     key,
   );
 
-  if (obs.street.raiseCount === 0) {
+  const fullRaises = obs.street.fullRaiseCount;
+  if (fullRaises <= 0) {
     if (rangeContains(openTokens(profile, position, depth), key) && allowed) {
       const limps = voluntaryLimpCount(obs);
       const raised = attemptRaise(obs, obs.bigBlind * (profile.openMultiple + limps), premium);
@@ -253,7 +316,8 @@ export function preflopBranches(obs: AIObservation, profile: AIProfile): Preflop
     return passive(obs, 'preflop-open-fold');
   }
 
-  if (obs.street.raiseCount === 1) return facingRaise(obs, profile, key);
+  if (fullRaises === 1) return facingRaise(obs, profile, key);
+  if (fullRaises === 2) return facingThreeBet(obs, profile, key);
 
   if (rangeContains(chart.fourBet[position], key) && allowed) {
     const raised = attemptRaise(obs, obs.currentMaxBet * reraiseMultiple(obs, profile), premium);

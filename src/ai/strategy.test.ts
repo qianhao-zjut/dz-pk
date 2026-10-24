@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { UNIFORM_RANGE_ASSUMPTION, type EquityOk } from './equity';
 import { buildObservation } from './observation';
 import { AGGRO_BB_MIX, SOLID_BB_MIX } from './defendLines';
-import { PROFILES } from './profiles';
+import { PROFILES, profileFor } from './profiles';
+import { stackDepth } from './preflop';
 import { isLegalMove } from './prices';
 import { decide, inPosition } from './strategy';
 import type { AIProfile } from './profiles';
@@ -107,7 +108,8 @@ describe('翻前范围、位置和风格', () => {
       currentPlayerIndex: 3,
       players: four(3, cards),
     });
-    const moves = (cards: string[]) => (Object.values(PROFILES) as AIProfile[]).map((profile) => (
+    const legacy = [PROFILES.ai_0, PROFILES.ai_1, PROFILES.ai_2];
+    const moves = (cards: string[]) => legacy.map((profile) => (
       decide(utg(cards), profile, { rng: () => 0.2 }).decision.move.action
     ));
     expect(moves(['As', 'Td'])).toEqual(['fold', 'raise', 'fold']);
@@ -561,5 +563,144 @@ describe('再加注混合与尺度', () => {
       players: limped,
     });
     expect(decide(isolated, PROFILES.ai_0).decision.move).toEqual({ action: 'raise', raiseTo: 35 });
+  });
+});
+
+describe('有效深度和普通 3bet', () => {
+  function chipStack(total: number, posted: number, status: 'active' | 'all-in' | 'folded' = 'active') {
+    return { chips: total - posted, currentBet: posted, invested: posted, status, ...(status === 'all-in' ? { chips: 0, currentBet: posted, invested: posted } : {}) };
+  }
+
+  it('0.5bb 全下小盲不把 200bb 主对局压成短筹，40bb 开池者则按短筹', () => {
+    const bb = 10;
+    const players = [
+      seat('human', undefined, chipStack(2000, 25)),
+      seat('ai_0', undefined, { chips: 0, currentBet: 5, invested: 5, status: 'all-in' }),
+      seat('ai_1', ['Ah', 'Kd'], chipStack(2000, 10)),
+      seat('ai_2', undefined, { chips: 2000, currentBet: 0, invested: 0, status: 'folded' }),
+    ];
+    const deep = must({
+      currentPlayerIndex: 2,
+      currentMaxBet: 25,
+      lastRaiseSize: 15,
+      pot: 40,
+      bigBlind: bb,
+      players,
+      streetActions: [
+        { actorId: 'ai_0', stage: 'preflop', kind: 'post', to: 5 },
+        { actorId: 'ai_1', stage: 'preflop', kind: 'post', to: 10 },
+        { actorId: 'human', stage: 'preflop', kind: 'raise', to: 25 },
+      ],
+    });
+    expect(stackDepth(deep)).toBe('deep');
+    expect(decide(deep, PROFILES.ai_0).diagnosis.referenceOpponentId).toBe('human');
+    expect(decide(deep, PROFILES.ai_0).diagnosis.effectiveStackBb).toBe(200);
+    expect(decide(deep, PROFILES.ai_0).diagnosis.actionContext).toBe('facing-open');
+
+    const shortOpener = players.map((player, index) => (
+      index === 0 ? seat('human', undefined, chipStack(400, 25)) : player
+    ));
+    const short = must({
+      currentPlayerIndex: 2,
+      currentMaxBet: 25,
+      lastRaiseSize: 15,
+      pot: 40,
+      players: shortOpener,
+      streetActions: [
+        { actorId: 'ai_0', stage: 'preflop', kind: 'post', to: 5 },
+        { actorId: 'ai_1', stage: 'preflop', kind: 'post', to: 10 },
+        { actorId: 'human', stage: 'preflop', kind: 'raise', to: 25 },
+      ],
+    });
+    expect(stackDepth(short)).toBe('short');
+    expect(decide(short, PROFILES.ai_0).diagnosis.referenceOpponentId).toBe('human');
+
+    const opening = must({
+      currentPlayerIndex: 0,
+      currentMaxBet: 10,
+      lastRaiseSize: 10,
+      pot: 15,
+      players: [
+        seat('human', ['As', 'Kd'], chipStack(2000, 0)),
+        seat('ai_0', undefined, { chips: 0, currentBet: 5, invested: 5, status: 'all-in' }),
+        seat('ai_1', undefined, chipStack(2000, 10)),
+        seat('ai_2', undefined, { chips: 50, currentBet: 0, invested: 0, status: 'folded' }),
+      ],
+      streetActions: [
+        { actorId: 'ai_0', stage: 'preflop', kind: 'post', to: 5 },
+        { actorId: 'ai_1', stage: 'preflop', kind: 'post', to: 10 },
+      ],
+    });
+    expect(stackDepth(opening)).toBe('deep');
+    expect(decide(opening, PROFILES.ai_0).diagnosis.referenceOpponentId).toBe('ai_1');
+  });
+
+  it('不足额全下不重置完整加注者', () => {
+    const built = must({
+      currentPlayerIndex: 2,
+      currentMaxBet: 30,
+      lastRaiseSize: 15,
+      players: four(2, ['Ah', 'Kd'], { currentBet: 10, invested: 10, chips: 1990 }),
+      streetActions: [
+        { actorId: 'human', stage: 'preflop', kind: 'raise', to: 25 },
+        { actorId: 'ai_0', stage: 'preflop', kind: 'raise', to: 30 },
+      ],
+    });
+    expect(built.street.fullRaiseCount).toBe(1);
+    expect(built.street.lastFullRaiserId).toBe('human');
+    expect(built.street.raiseCount).toBe(2);
+    expect(decide(built, PROFILES.ai_0).diagnosis.referenceOpponentId).toBe('human');
+  });
+
+  it('普通 3bet 覆盖 2.5 到 10、3 到 12、3.5 到 14，巨大开池和高风险仍收紧', () => {
+    const opened = (openTo: number, threeTo: number, cards: string[], total = 1000) => must({
+      currentPlayerIndex: 0,
+      currentMaxBet: threeTo,
+      lastRaiseSize: threeTo - openTo,
+      pot: openTo + threeTo,
+      players: four(0, cards, { chips: total - openTo, currentBet: openTo, invested: openTo }),
+      streetActions: [
+        { actorId: 'human', stage: 'preflop', kind: 'raise', to: openTo },
+        { actorId: 'ai_1', stage: 'preflop', kind: 'raise', to: threeTo },
+      ],
+    });
+    expect(decide(opened(25, 100, ['Js', 'Ts']), PROFILES.ai_0).diagnosis.priceTier).toBe('normal');
+    expect(decide(opened(25, 100, ['Js', 'Ts']), PROFILES.ai_0).decision.move.action).toBe('call');
+    expect(decide(opened(30, 120, ['Js', 'Ts']), PROFILES.ai_0).diagnosis.priceTier).toBe('normal');
+    expect(decide(opened(35, 140, ['Ah', 'Ts']), PROFILES.ai_1).diagnosis.priceTier).toBe('normal');
+    expect(decide(opened(35, 140, ['Ah', 'Ts']), PROFILES.ai_1).decision.move.action).not.toBe('fold');
+    expect(decide(must({
+      currentPlayerIndex: 0,
+      currentMaxBet: 60,
+      lastRaiseSize: 50,
+      players: four(0, ['Js', 'Ts']),
+      streetActions: [{ actorId: 'ai_2', stage: 'preflop', kind: 'raise', to: 60 }],
+    }), PROFILES.ai_0).diagnosis.priceTier).toBe('large');
+    expect(decide(opened(25, 200, ['Th', 'Td']), PROFILES.ai_0).diagnosis.priceTier).toBe('high-risk');
+    expect(decide(opened(25, 200, ['Th', 'Td']), PROFILES.ai_0).decision.move.action).toBe('fold');
+    const short = opened(25, 100, ['Js', 'Ts'], 400);
+    expect(decide(short, PROFILES.ai_0).diagnosis.priceTier).toBe('large');
+    expect(decide(short, PROFILES.ai_0).decision.move.action).toBe('fold');
+  });
+
+  it('松跟平跟中等牌，强牌加注，72o 弃牌，免费则过牌', () => {
+    const facing = (cards: string[]) => must({
+      currentPlayerIndex: 2,
+      currentMaxBet: 25,
+      lastRaiseSize: 15,
+      players: four(2, cards, { currentBet: 10, invested: 10, chips: 990 }),
+      streetActions: [{ actorId: 'human', stage: 'preflop', kind: 'raise', to: 25 }],
+    });
+    expect(decide(facing(['7c', '2d']), profileFor('loose_passive')).decision.move.action).toBe('fold');
+    expect(decide(facing(['As', 'Ad']), profileFor('loose_passive')).decision.move.action).toBe('raise');
+    expect(decide(facing(['8h', '6h']), profileFor('loose_passive')).decision.move.action).toBe('call');
+    expect(decide(facing(['8h', '6h']), PROFILES.ai_2).decision.move.action).toBe('fold');
+    const free = must({
+      currentPlayerIndex: 2,
+      currentMaxBet: 10,
+      players: four(2, ['7c', '2d'], { currentBet: 10, invested: 10 }),
+    });
+    expect(decide(free, profileFor('loose_passive')).decision.move).toEqual({ action: 'check' });
+    expect(decide(facing(['As', 'Ad']), profileFor('loose_passive')).diagnosis.profileId).toBe('loose_passive');
   });
 });

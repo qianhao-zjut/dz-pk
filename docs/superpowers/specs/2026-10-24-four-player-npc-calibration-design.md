@@ -2,7 +2,9 @@
 
 日期：2026-10-24（Asia/Shanghai）
 
-状态：待实施。编写基线：`326b586`。配套计划：`docs/superpowers/plans/2026-10-24-four-player-npc-calibration.md`。
+状态：已实施。编写基线：`326b586`；实现时工作区在文档提交 `b4cfe8b` 上，游戏代码仍是该基线。配套计划：`docs/superpowers/plans/2026-10-24-four-player-npc-calibration.md`。实测见 `docs/superpowers/reports/2026-10-24-four-player-calibration.md`。
+
+实施说明：2.5bb 与 3bb 都落在常规价格档，防守表不按这两个尺度再拆，所以同一副牌的跟注/弃牌相同，联合全弃率一致。100bb 固定人类见翻牌约 11.2%–11.7%，高于同口径旧混合的 9.2%–9.3%，没有达到 15% 的非阻断参考。固定人类开池范围偏紧，且面对超过 4bb 的加注会弃牌；机器人没有读取该策略，也没有为了凑翻牌率而强制跟注。全桌翻牌率从约 17% 升到约 27%。
 
 ## 1. 本轮目标和范围
 

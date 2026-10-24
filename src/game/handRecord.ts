@@ -99,6 +99,7 @@ const REASONS: Record<string, string> = {
   'preflop-fold': '翻前弃牌',
   'preflop-check': '翻前过牌',
   'preflop-four-bet': '翻前四注',
+  'preflop-call-3bet': '翻前跟注三次下注',
   'preflop-call-reraise': '翻前跟注再加注',
   'postflop-raise': '翻后加注',
   'postflop-call': '翻后跟注',
@@ -111,9 +112,22 @@ const REASONS: Record<string, string> = {
   'equity-fallback': '权益估计失败后的安全动作',
 };
 
+const ACTION_CONTEXT: Record<string, string> = {
+  unopened: '未开池',
+  'facing-open': '面对开池',
+  'facing-3bet': '面对三次下注',
+  'facing-4bet-plus': '面对四注及以上',
+  unknown: '加注信息不足',
+};
+
 export function reasonText(code: string, fallback: boolean): string {
   if (fallback) return REASONS[code] ?? '安全降级';
   return REASONS[code] ?? code;
+}
+
+export function actionContextText(code: string | null | undefined): string | null {
+  if (!code) return null;
+  return ACTION_CONTEXT[code] ?? '加注信息不足';
 }
 
 export function practiceTip(role: SeatRole): string {

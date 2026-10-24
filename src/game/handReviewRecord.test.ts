@@ -304,6 +304,27 @@ describe('hand_review v1 记录', () => {
       `第 3 手 底牌 As Kd\n\n\`\`\`json\n${JSON.stringify(partialNpc)}\n\`\`\``,
     );
     expect(invented).toBeNull();
+
+    const withReference = showdownHand();
+    const npcAction = withReference.actions.find((action) => action.npc);
+    if (!npcAction?.npc) throw new Error('缺少 NPC 依据');
+    npcAction.npc = {
+      ...npcAction.npc,
+      referenceOpponentId: 'human',
+      effectiveStackBb: 200,
+      actionContext: 'facing-open',
+    };
+    withReference.config = { ...withReference.config, npcConfigVersion: '2026-10-24.2' };
+    const built = buildHandReviewRecord(withReference);
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(parseCompletedHandFromBody(built.body)).toEqual(withReference);
+
+    const broken = showdownHand();
+    const brokenAction = broken.actions.find((action) => action.npc);
+    if (!brokenAction?.npc) throw new Error('缺少 NPC 依据');
+    brokenAction.npc = { ...brokenAction.npc, referenceOpponentId: '' };
+    expect(buildHandReviewRecord(broken).ok).toBe(false);
   });
 
   it('拒绝带 deck 或 liveHand 的对象，避免把未发牌装进记录', () => {

@@ -52,14 +52,64 @@ export function toNpcSource(input: NpcSourceInput): ObservationSource {
   };
 }
 
-function streetSummary(source: Pick<NpcSourceInput, 'stage' | 'streetActions'>): StreetSummary {
-  if (!isBettingStage(source.stage)) return { raiseCount: 0, lastRaiserId: null };
-  const raises = source.streetActions.filter((action) => action.stage === source.stage && action.kind === 'raise');
-  const last = raises[raises.length - 1];
+const EMPTY_STREET: StreetSummary = {
+  raiseCount: 0,
+  lastRaiserId: null,
+  fullRaiseCount: 0,
+  lastFullRaiserId: null,
+  openerId: null,
+  openTo: null,
+  threeBetActorId: null,
+  threeBetTo: null,
+};
+
+/** 用公开动作和最小加注增量区分完整加注与不足额全下。不读取底牌。 */
+export function summarizeStreet(
+  stage: NpcSourceInput['stage'],
+  actions: readonly NpcSourceInput['streetActions'][number][],
+  bigBlind: number,
+): StreetSummary {
+  if (!isBettingStage(stage)) return { ...EMPTY_STREET };
+  let currentMax = 0;
+  let minIncrement = bigBlind > 0 ? bigBlind : 0;
+  const raw: Array<{ actorId: string; to: number }> = [];
+  const full: Array<{ actorId: string; to: number }> = [];
+  for (const action of actions) {
+    if (action.stage !== stage) continue;
+    if (action.kind === 'post') {
+      if (action.to != null && action.to > currentMax) currentMax = action.to;
+      continue;
+    }
+    if (action.kind !== 'raise' || action.to == null) continue;
+    raw.push({ actorId: action.actorId, to: action.to });
+    const increment = action.to - currentMax;
+    const complete = increment > 0 && (minIncrement <= 0 || increment >= minIncrement);
+    if (complete) {
+      full.push({ actorId: action.actorId, to: action.to });
+      minIncrement = increment;
+      currentMax = action.to;
+    } else if (action.to > currentMax) {
+      currentMax = action.to;
+    }
+  }
+  const last = raw[raw.length - 1];
+  const lastFull = full[full.length - 1];
+  const open = full[0];
+  const threeBet = full[1];
   return {
-    raiseCount: raises.length,
+    raiseCount: raw.length,
     lastRaiserId: last ? last.actorId : null,
+    fullRaiseCount: full.length,
+    lastFullRaiserId: lastFull ? lastFull.actorId : null,
+    openerId: open ? open.actorId : null,
+    openTo: open ? open.to : null,
+    threeBetActorId: threeBet ? threeBet.actorId : null,
+    threeBetTo: threeBet ? threeBet.to : null,
   };
+}
+
+function streetSummary(source: Pick<NpcSourceInput, 'stage' | 'streetActions' | 'bigBlind'>): StreetSummary {
+  return summarizeStreet(source.stage, source.streetActions, source.bigBlind);
 }
 
 export function buildObservation(

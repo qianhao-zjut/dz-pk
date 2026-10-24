@@ -213,6 +213,9 @@ function configIssues(value: unknown): string[] {
   if (!isScenario(value.scenarioId)) issues.push('config.scenarioId');
   if (value.opponents !== 'mixed' && value.opponents !== 'loose' && value.opponents !== 'tight') issues.push('config.opponents');
   if (!Array.isArray(value.npcs) || value.npcs.some((seat) => !isNpcSeat(seat))) issues.push('config.npcs');
+  if ('npcConfigVersion' in value && (typeof value.npcConfigVersion !== 'string' || value.npcConfigVersion === '')) {
+    issues.push('config.npcConfigVersion');
+  }
   return issues;
 }
 
@@ -297,7 +300,20 @@ function isNpcContext(value: unknown): boolean {
     && (value.evReference === null || isFiniteNumber(value.evReference))
     && (value.rngDraw === null || isFiniteNumber(value.rngDraw))
     && isStringArray(value.assumptions)
-    && typeof value.fallback === 'boolean';
+    && typeof value.fallback === 'boolean'
+    && optionalNullableId(value, 'referenceOpponentId')
+    && optionalNullableNumber(value, 'effectiveStackBb')
+    && optionalNullableId(value, 'actionContext');
+}
+
+function optionalNullableId(value: Record<string, unknown>, key: string): boolean {
+  if (!(key in value)) return true;
+  return value[key] === null || (typeof value[key] === 'string' && value[key] !== '');
+}
+
+function optionalNullableNumber(value: Record<string, unknown>, key: string): boolean {
+  if (!(key in value)) return true;
+  return value[key] === null || isFiniteNumber(value[key]);
 }
 
 function isPayout(value: unknown): boolean {

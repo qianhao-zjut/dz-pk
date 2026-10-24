@@ -12,7 +12,8 @@ import { stackText } from './positions';
 import { analyzeDraws } from './draws';
 import { quoteCall, type QuotePlayer } from './priceQuote';
 import { reviewAutoOpenDecision } from './reviewGate';
-import { bankrollAdvice, npcsFor, resolveBuyIn, tableFromSelection, LEVELS } from './sessionConfig';
+import { bankrollAdvice, npcsFor, resolveBuyIn, sessionFromTable, tableFromSelection, LEVELS } from './sessionConfig';
+import { RANGE_CONFIG_VERSION } from '../ai/profiles';
 import { actionShortcuts, raiseVerb } from './shortcuts';
 import { resetHandHistoryForTests, useHandHistoryStore } from '../store/handHistoryStore';
 import { useGameStore } from '../store/gameStore';
@@ -41,6 +42,7 @@ describe('界面文案', () => {
     expect(lobby).toContain('每手结束自动展开回顾');
     expect(lobby).not.toContain('破产风险极高');
     expect(lobby).toContain('混合对手');
+    expect(lobby).toContain('当前组合：稳健、松凶、松跟。');
   });
 });
 
@@ -145,12 +147,23 @@ describe('买入和对手', () => {
     const loose = npcsFor('loose');
     const tight = npcsFor('tight');
     expect(new Set(loose.map((seat) => seat.profileId))).toEqual(new Set(['ai_1']));
-    expect(loose.every((seat) => seat.style === '激进')).toBe(true);
+    expect(loose.every((seat) => seat.style === '松凶')).toBe(true);
+    const mixed = npcsFor('mixed');
+    expect(mixed.map((seat) => seat.profileId)).toEqual(['ai_0', 'ai_1', 'loose_passive']);
+    expect(mixed.map((seat) => seat.style)).toEqual(['稳健', '松凶', '松跟']);
+    expect(mixed.map((seat) => seat.id)).toEqual(['ai_0', 'ai_1', 'ai_2']);
     expect(new Set(tight.map((seat) => seat.profileId))).toEqual(new Set(['ai_2']));
     expect(tight.every((seat) => !seat.name.includes('激进'))).toBe(true);
     const table = tableFromSelection(LEVELS[0], 'short', 40, 'tight');
     expect(table.buyIn).toBe(80);
     expect(table.npcs?.every((seat) => seat.profileId === 'ai_2')).toBe(true);
+    const selected = tableFromSelection(LEVELS[0], 'standard', 100, 'mixed');
+    expect(selected.npcConfigVersion).toBe(RANGE_CONFIG_VERSION);
+    expect(sessionFromTable(selected).npcConfigVersion).toBe(RANGE_CONFIG_VERSION);
+    const legacy = sessionFromTable({ id: 'old', name: '旧桌', smallBlind: 1, bigBlind: 2, buyIn: 200, npcs: npcsFor('tight') });
+    expect(legacy.npcConfigVersion).toBeUndefined();
+    expect(legacy.npcs.every((seat) => seat.profileId === 'ai_2')).toBe(true);
+    expect(sessionFromTable({ ...selected, npcConfigVersion: 'frozen-old' }).npcConfigVersion).toBe('frozen-old');
   });
 
   it('资金提示用可买入次数，不把 30 个买入写成破产概率', () => {

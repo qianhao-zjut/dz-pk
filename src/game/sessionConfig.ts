@@ -1,3 +1,4 @@
+import { RANGE_CONFIG_VERSION } from '../ai/profiles';
 import type { ProfileId } from '../ai/types';
 
 export type ScenarioId = 'standard' | 'short' | 'deep';
@@ -14,6 +15,8 @@ export interface TableConfig {
   buyInBb?: number;
   opponents?: OpponentMix;
   npcs?: NpcSeat[];
+  /** 新选择写入。旧配置缺这个字段时保持缺失。 */
+  npcConfigVersion?: string;
 }
 
 export interface LevelOption {
@@ -41,6 +44,7 @@ export interface SessionSnapshot {
   buyIn: number;
   opponents: OpponentMix;
   npcs: NpcSeat[];
+  npcConfigVersion?: string;
 }
 
 export const LEVELS: LevelOption[] = [
@@ -57,14 +61,14 @@ export const SCENARIOS: Array<{ id: ScenarioId; name: string; buyInBb: BuyInDept
 
 const MIXED: NpcSeat[] = [
   { id: 'ai_0', name: '德州老手', profileId: 'ai_0', style: '稳健' },
-  { id: 'ai_1', name: '激进小伙', profileId: 'ai_1', style: '激进' },
-  { id: 'ai_2', name: '保守大叔', profileId: 'ai_2', style: '保守' },
+  { id: 'ai_1', name: '激进小伙', profileId: 'ai_1', style: '松凶' },
+  { id: 'ai_2', name: '松跟玩家', profileId: 'loose_passive', style: '松跟' },
 ];
 
 const LOOSE: NpcSeat[] = [
-  { id: 'ai_0', name: '松凶常客', profileId: 'ai_1', style: '激进' },
-  { id: 'ai_1', name: '施压玩家', profileId: 'ai_1', style: '激进' },
-  { id: 'ai_2', name: '激进小伙', profileId: 'ai_1', style: '激进' },
+  { id: 'ai_0', name: '松凶常客', profileId: 'ai_1', style: '松凶' },
+  { id: 'ai_1', name: '施压玩家', profileId: 'ai_1', style: '松凶' },
+  { id: 'ai_2', name: '激进小伙', profileId: 'ai_1', style: '松凶' },
 ];
 
 const TIGHT: NpcSeat[] = [
@@ -98,7 +102,7 @@ export function bankrollAdvice(balance: number, buyIn: number): { canSit: boolea
 export function sessionFromTable(table: TableConfig): SessionSnapshot {
   const buyInBb = table.buyInBb ?? (table.bigBlind > 0 ? Math.round(table.buyIn / table.bigBlind) : 100);
   const opponents = table.opponents ?? 'mixed';
-  return {
+  const session: SessionSnapshot = {
     version: 1,
     levelId: table.id,
     levelName: table.name,
@@ -110,6 +114,14 @@ export function sessionFromTable(table: TableConfig): SessionSnapshot {
     opponents,
     npcs: table.npcs ? table.npcs.map((seat) => ({ ...seat })) : npcsFor(opponents),
   };
+  if (typeof table.npcConfigVersion === 'string') session.npcConfigVersion = table.npcConfigVersion;
+  return session;
+}
+
+export function mixSummary(mix: OpponentMix): string {
+  if (mix === 'loose') return '当前组合：三名松凶。';
+  if (mix === 'tight') return '当前组合：三名保守。';
+  return '当前组合：稳健、松凶、松跟。';
 }
 
 export function tableFromSelection(
@@ -129,5 +141,6 @@ export function tableFromSelection(
     buyInBb,
     opponents,
     npcs: npcsFor(opponents),
+    npcConfigVersion: RANGE_CONFIG_VERSION,
   };
 }

@@ -5,7 +5,7 @@ export type TableStage = BettingStage | 'idle' | 'showdown';
 
 export type SeatStatus = 'active' | 'folded' | 'all-in' | 'sitting-out';
 
-export type ProfileId = 'ai_0' | 'ai_1' | 'ai_2';
+export type ProfileId = 'ai_0' | 'ai_1' | 'ai_2' | 'loose_passive';
 
 /** 本街公开动作。不含底牌。 */
 export interface PublicAction {
@@ -37,8 +37,16 @@ export interface LegalActions {
 }
 
 export interface StreetSummary {
+  /** 本街 kind=raise 的次数，含不足额全下。不能单靠它判断 3bet。 */
   raiseCount: number;
   lastRaiserId: string | null;
+  /** 达到最小加注增量的完整加注次数。不足额全下不计入。 */
+  fullRaiseCount: number;
+  lastFullRaiserId: string | null;
+  openerId: string | null;
+  openTo: number | null;
+  threeBetActorId: string | null;
+  threeBetTo: number | null;
 }
 
 export interface AIObservation {
@@ -89,6 +97,12 @@ export interface AIDiagnosis {
   position: string | null;
   priceTier?: string | null;
   stackDepth?: string | null;
+  /** 本次定价参考的对手。没有可参考对手时为 null。旧档案可以缺这个字段。 */
+  referenceOpponentId?: string | null;
+  /** 策略用的有效深度，单位是大盲。不改变真实可争夺底池。 */
+  effectiveStackBb?: number | null;
+  /** unopened / facing-open / facing-3bet / facing-4bet-plus / unknown */
+  actionContext?: string | null;
   fallback?: boolean;
   rngDraw?: number | null;
 }

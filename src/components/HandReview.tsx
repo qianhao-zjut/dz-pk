@@ -1,5 +1,5 @@
 import React from 'react';
-import { practiceTip, reasonText, type CompletedHand } from '../game/handRecord';
+import { actionContextText, practiceTip, reasonText, type CompletedHand } from '../game/handRecord';
 import { roleLabel } from '../game/positions';
 import { useHandHistoryStore } from '../store/handHistoryStore';
 
@@ -88,6 +88,9 @@ export const ReviewBody: React.FC<{ hand: CompletedHand }> = ({ hand }) => {
                       {action.npc.position ? ` · ${action.npc.position}` : ''}
                       {action.npc.priceTier ? ` · 价格 ${action.npc.priceTier}` : ''}
                       {action.npc.stackDepth ? ` · ${action.npc.stackDepth}` : ''}
+                      {actionContextText(action.npc.actionContext) ? ` · ${actionContextText(action.npc.actionContext)}` : ''}
+                      {action.npc.effectiveStackBb != null ? ` · 有效 ${action.npc.effectiveStackBb.toFixed(1)}bb` : ''}
+                      {action.npc.referenceOpponentId ? ` · 参考 ${action.npc.referenceOpponentId}` : ''}
                       {action.npc.equity != null ? ` · 抽样权益 ${(action.npc.equity * 100).toFixed(0)}%（${action.npc.samples} 次）` : ''}
                     </div>
                   )}

@@ -8,6 +8,9 @@ export interface NpcActionContext {
   handKey: string | null;
   priceTier: string | null;
   stackDepth: string | null;
+  referenceOpponentId?: string | null;
+  effectiveStackBb?: number | null;
+  actionContext?: string | null;
   samples: number;
   equity: number | null;
   evReference: number | null;

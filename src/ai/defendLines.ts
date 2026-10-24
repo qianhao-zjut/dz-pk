@@ -18,6 +18,7 @@ export interface DefendLine {
 export const SOLID_BB_MIX = 0.35;
 export const AGGRO_BB_MIX = 0.55;
 export const TIGHT_BB_MIX = 0.25;
+export const LOOSE_BB_MIX = 0.12;
 
 type ByOpener = Partial<Record<Spot, DefendLine>>;
 
@@ -71,18 +72,18 @@ const solidBbVsUtg = line({
   value: ['TT+', 'AQs+', 'AKo'],
   mix: ['77+', 'A9s+', 'AJo+', 'KQs', 'KQo', 'QJs', 'JTs'],
   mixFrequency: 0.2,
-  call: ['55+', 'A8s+', 'ATo+', 'KTs+', 'KJo+', 'QTs+', 'T9s', '98s'],
+  call: ['22+', 'A2s+', 'A8o+', 'K9s+', 'KTo+', 'Q9s+', 'QTo+', 'J9s+', 'JTo', 'T8s+', '97s+', '86s+', '76s', '65s', '54s', '98o'],
   shortFlat: ['88+', 'ATs+', 'ATo+', 'KQs', 'QJs', 'JTs', 'TT+', 'AQs+', 'AKo'],
-  deepCall: ['87s', '76s'],
+  deepCall: ['87o', 'T9o', '75s', '64s'],
 });
 
 const solidBbVsSb = line({
   value: ['99+', 'AJs+', 'AQo+', 'KQs'],
   mix: ['55+', 'A8s+', 'ATo+', 'KTs+', 'KJo+', 'QTs+', 'JTs', 'T9s'],
   mixFrequency: 0.3,
-  call: ['22+', 'A2s+', 'A8o+', 'K9s+', 'KTo+', 'Q9s+', 'QTo+', 'J9s+', '98s', '87s', '76s'],
+  call: ['22+', 'A2s+', 'A2o+', 'K5s+', 'K8o+', 'Q8s+', 'Q9o+', 'J8s+', 'J9o+', 'T8s+', '97s+', '86s+', '75s+', '65s', '54s', '98o', '87o', '76o'],
   shortFlat: solidShort,
-  deepCall: ['65s', '54s'],
+  deepCall: ['64s', '43s', 'T9o', 'K7o'],
 });
 
 const aggroBbVsBtn = line({
@@ -101,17 +102,17 @@ const aggroBbVsUtg = line({
   value: ['88+', 'ATs+', 'AJo+', 'KQs'],
   mix: ['55+', 'A5s+', 'ATo+', 'KTs+', 'KJo+', 'QTs+', 'JTs', 'T9s', '98s'],
   mixFrequency: 0.45,
-  call: ['22+', 'A2s+', 'A9o+', 'K9s+', 'KTo+', 'Q9s+', 'QJo', 'J9s+', '87s', '76s'],
+  call: ['22+', 'A2s+', 'A2o+', 'K5s+', 'K8o+', 'Q8s+', 'Q9o+', 'J8s+', 'J9o+', 'T8s+', '97s+', '86s+', '76s', '65s', '54s', '98o', '87o'],
   bluff: ['A5s', 'A4s'],
   shortFlat: aggroShort,
-  deepCall: ['65s', '54s'],
+  deepCall: ['K7o', 'Q8o', '64s', '43s'],
 });
 
 const aggroBbVsSb = line({
   value: ['77+', 'A9s+', 'ATo+', 'KQs', 'KQo'],
   mix: ['22+', 'A2s+', 'A5o+', 'K8s+', 'KTo+', 'Q9s+', 'QTo+', 'J9s+', 'T9s', '98s', '87s'],
   mixFrequency: 0.5,
-  call: ['K9o', 'Q9o', 'J9o', 'T8s', '76s', '65s', '98o'],
+  call: ['A2o+', 'K2s+', 'K5o+', 'Q4s+', 'Q8o+', 'J7s+', 'J8o+', 'T7s+', 'T8o+', '96s+', '85s+', '74s+', '64s+', '54s', '43s', '98o', '87o', '76o'],
   shortFlat: aggroShort,
   deepCall: ['54s', '64s'],
 });
@@ -147,37 +148,37 @@ const solidSbVsBtn = line({
   value: ['TT+', 'AQs+', 'AKo', 'KQs'],
   mix: ['77+', 'A9s+', 'ATo+', 'KTs+', 'KJo+', 'QTs+', 'JTs', 'T9s'],
   mixFrequency: 0.4,
-  call: ['55+', 'A5s+', 'A9o+', 'K9s+', 'Q9s+', '98s', '87s', '76s'],
+  call: ['22+', 'A2s+', 'A8o+', 'K9s+', 'KTo+', 'Q9s+', 'QTo+', 'J9s+', 'T8s+', '98s', '87s', '76s', '65s', '54s'],
   shortFlat: solidShort,
-  deepCall: ['65s', '54s'],
+  deepCall: ['A7o', 'K9o', '98o', '64s'],
 });
 
 const solidSbVsUtg = line({
   value: ['JJ+', 'AQs+', 'AKo'],
   mix: ['99+', 'AJs+', 'AQo+', 'KQs'],
   mixFrequency: 0.25,
-  call: ['88+', 'ATs+', 'AJo+', 'KJs', 'QJs', 'JTs'],
+  call: ['55+', 'A5s+', 'ATo+', 'KTs+', 'KJo+', 'QTs+', 'JTs', 'T9s', '98s', '87s'],
   shortFlat: ['TT+', 'AQs+', 'AKo', '99+', 'AJs+'],
-  deepCall: ['T9s'],
+  deepCall: ['76s', 'A9s', 'QJs'],
 });
 
 const aggroSbVsBtn = line({
   value: ['77+', 'ATs+', 'AJo+', 'KQs', 'KQo'],
   mix: ['22+', 'A2s+', 'A8o+', 'K9s+', 'KTo+', 'Q9s+', 'QTo+', 'J9s+', 'T9s', '98s', '87s', '76s'],
   mixFrequency: 0.6,
-  call: ['A5o+', 'K8s', 'Q8s', 'J8s', 'T8s', '65s', '98o'],
+  call: ['A2o+', 'K5s+', 'K8o+', 'Q8s+', 'Q9o+', 'J8s+', 'J9o+', 'T8s+', '97s+', '86s+', '65s', '54s', '98o', '87o'],
   bluff: ['A5s', 'A4s'],
   shortFlat: aggroShort,
-  deepCall: ['54s', '64s'],
+  deepCall: ['K7o', 'Q8o', '64s', '43s'],
 });
 
 const aggroSbVsUtg = line({
   value: ['99+', 'AJs+', 'AQo+', 'KQs'],
   mix: ['66+', 'A9s+', 'ATo+', 'KTs+', 'KJo+', 'QJs', 'JTs'],
   mixFrequency: 0.5,
-  call: ['55+', 'A5s+', 'KQs', 'QTs', 'T9s', '98s'],
+  call: ['22+', 'A2s+', 'A9o+', 'K9s+', 'KTo+', 'Q9s+', 'QTo+', 'J9s+', 'T9s', '98s', '87s', '76s', '65s'],
   shortFlat: aggroShort,
-  deepCall: ['87s'],
+  deepCall: ['54s', 'A8o', 'K9o'],
 });
 
 const tightSbVsBtn = line({
@@ -198,6 +199,71 @@ const tightSbVsUtg = line({
   deepCall: [],
 });
 
+const looseShort = ['66+', 'A9s+', 'ATo+', 'KTs+', 'KJo+', 'QJs', 'JTs', 'T9s', '77+', 'AJs+', 'AQo+', 'KQs'];
+
+const looseBbVsBtn = line({
+  value: ['QQ+', 'AKs', 'AKo'],
+  mix: ['77+', 'A9s+', 'ATo+', 'KQs', 'KQo', 'QJs', 'JTs'],
+  mixFrequency: LOOSE_BB_MIX,
+  call: [
+    '22+', 'A2s+', 'A2o+', 'K2s+', 'K5o+', 'Q5s+', 'Q7o+', 'J7s+', 'J7o+', 'T7s+', 'T7o+', 'T8o+',
+    '96s+', '97o', '85s+', '86o', '74s+', '75o', '64s+', '65o', '53s+', '54o', '43s', '98o', '87o',
+  ],
+  shortFlat: looseShort,
+  deepCall: ['K5o', 'Q7o', 'J7o', '32s', '42s'],
+});
+
+const looseBbVsUtg = line({
+  value: ['QQ+', 'AKs', 'AKo'],
+  mix: ['88+', 'ATs+', 'AJo+', 'KQs', 'QJs', 'JTs'],
+  mixFrequency: LOOSE_BB_MIX,
+  call: [
+    '22+', 'A2s+', 'A2o+', 'K2s+', 'K5o+', 'Q4s+', 'Q8o+', 'J6s+', 'J8o+',
+    'T7s+', 'T8o+', '96s+', '97o', '85s+', '86o', '74s+', '75o', '64s+', '53s+', '43s', '98o', '87o',
+  ],
+  shortFlat: looseShort,
+  deepCall: ['A7o', 'K9o', '75s', '64s'],
+});
+
+const looseBbVsSb = line({
+  value: ['JJ+', 'AQs+', 'AKo', 'KQs'],
+  mix: ['66+', 'A8s+', 'ATo+', 'KTs+', 'KJo+', 'QTs+', 'JTs', 'T9s'],
+  mixFrequency: LOOSE_BB_MIX,
+  call: [
+    '22+', 'A2s+', 'A2o+', 'K2s+', 'K4o+', 'Q2s+', 'Q6o+', 'J5s+', 'J7o+', 'T6s+', 'T7o+',
+    '95s+', '96o', '84s+', '85o', '74s+', '75o', '63s+', '64o', '53s+', '54o', '43s', '32s', '98o', '87o', '76o',
+  ],
+  shortFlat: looseShort,
+  deepCall: ['K7o', 'Q8o', '53s', '32s'],
+});
+
+const looseSbVsBtn = line({
+  value: ['QQ+', 'AKs', 'AKo'],
+  mix: ['88+', 'ATs+', 'AJo+', 'KQs', 'QJs'],
+  mixFrequency: 0.15,
+  call: ['22+', 'A2s+', 'A5o+', 'K8s+', 'KTo+', 'Q9s+', 'QTo+', 'J9s+', 'T8s+', '98s', '87s', '76s', '65s', '54s', '98o'],
+  shortFlat: looseShort,
+  deepCall: ['A4o', 'K9o', '64s'],
+});
+
+const looseSbVsUtg = line({
+  value: ['QQ+', 'AKs', 'AKo'],
+  mix: ['99+', 'AJs+', 'AQo+', 'KQs'],
+  mixFrequency: 0.12,
+  call: ['22+', 'A2s+', 'A9o+', 'K9s+', 'KTo+', 'Q9s+', 'QJo', 'J9s+', 'T9s', '98s', '87s', '76s', '65s'],
+  shortFlat: looseShort,
+  deepCall: ['A8o', '54s', 'QTs'],
+});
+
+const looseBtnVsUtg = line({
+  value: ['JJ+', 'AQs+', 'AKo'],
+  mix: ['99', 'TT', 'AJs', 'ATs', 'AQo', 'KQs'],
+  mixFrequency: 0.15,
+  call: ['22+', 'A2s+', 'A9o+', 'K9s+', 'KTo+', 'Q9s+', 'QTo+', 'J9s+', 'JTo', 'T9s', '98s', '87s', '76s', '65s'],
+  shortFlat: looseShort,
+  deepCall: ['54s', 'A8o', 'K9o'],
+});
+
 function pack(bb: ByOpener, sb: ByOpener, btn?: ByOpener): Partial<Record<Spot, ByOpener>> {
   return { BB: bb, SB: sb, ...(btn ? { BTN: btn } : {}) };
 }
@@ -216,6 +282,11 @@ export const DEFEND: Record<ProfileId, Partial<Record<Spot, ByOpener>>> = {
   ai_2: pack(
     { BTN: tightBbVsBtn, UTG: tightBbVsUtg, SB: tightBbVsSb },
     { BTN: tightSbVsBtn, UTG: tightSbVsUtg },
+  ),
+  loose_passive: pack(
+    { BTN: looseBbVsBtn, UTG: looseBbVsUtg, SB: looseBbVsSb },
+    { BTN: looseSbVsBtn, UTG: looseSbVsUtg },
+    { UTG: looseBtnVsUtg },
   ),
 };
 
