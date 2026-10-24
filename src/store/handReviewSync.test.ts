@@ -5,6 +5,7 @@ import { buildHandReviewRecord } from '../game/handReviewRecord';
 import {
   HAND_REVIEW_OUTBOX_LS_KEY,
   createMemoryOutboxStorage,
+  type HandReviewOutboxStorage,
 } from './handReviewOutbox';
 import {
   enqueueHandForTests,
@@ -219,6 +220,49 @@ describe('handReviewSync outbox', () => {
     expect(await getSyncedHandReviewsForTests()).toHaveLength(1);
     await enqueueHandForTests(hand);
     expect(await getHandReviewOutboxForTests()).toHaveLength(0);
+  });
+
+  it('ACK 先写 synced 再删队列：remove 与 synced 之间入队不会变成 pending+synced', async () => {
+    const hand = sampleHand(1);
+    const base = createMemoryOutboxStorage(true);
+    let releaseAfterRemove!: () => void;
+    const afterRemoveGate = new Promise<void>((resolve) => { releaseAfterRemove = resolve; });
+    let removeStarted = false;
+    const storage: HandReviewOutboxStorage = {
+      persistAvailable: base.persistAvailable,
+      get: (key) => base.get(key),
+      put: (item) => base.put(item),
+      list: () => base.list(),
+      getSynced: (key) => base.getSynced(key),
+      listSynced: () => base.listSynced(),
+      putSynced: (meta) => base.putSynced(meta),
+      async removeByKey(clientKey) {
+        await base.removeByKey(clientKey);
+        removeStarted = true;
+        // 模拟旧顺序 remove→putSynced 的中间窗口；新顺序此时 synced 已存在。
+        await afterRemoveGate;
+      },
+    };
+    const fetchImpl = vi.fn(async () => successResponse(hand, 'rid-race', 201));
+    boot({ storage, fetchImpl });
+    await waitForHandReviewSyncReadyForTests();
+
+    await enqueueHandForTests(hand);
+    const flushPromise = flushHandReviewSyncForTests();
+    await vi.waitFor(() => expect(removeStarted).toBe(true));
+
+    // 窗口内再次入队：若先 remove 后 synced，会重 put 并在后续 flush 多 POST。
+    await enqueueHandForTests(hand);
+    expect(await getHandReviewOutboxForTests()).toEqual([]);
+    expect(await getSyncedHandReviewsForTests()).toEqual([
+      { client_key: 'dz-pk:hand_review:sess-sync:1', record_id: 'rid-race', hand_id: hand.id },
+    ]);
+
+    releaseAfterRemove();
+    await flushPromise;
+    expect(await getHandReviewOutboxForTests()).toEqual([]);
+    await flushHandReviewSyncForTests();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it('A 发送期间 B 入队，ACK 只按 key 移除 A，不丢 B', async () => {

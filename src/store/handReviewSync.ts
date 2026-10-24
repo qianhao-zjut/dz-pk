@@ -140,6 +140,8 @@ async function enqueueHand(hand: CompletedHand): Promise<void> {
   if (existing) return;
 
   if (!built.ok) {
+    // put 前再查 synced，避免 ACK 窗口内并发入队写成 pending+synced。
+    if (await storage.getSynced(clientKey)) return;
     await storage.put({
       client_key: clientKey,
       source: 'dz-pk',
@@ -168,6 +170,8 @@ async function enqueueHand(hand: CompletedHand): Promise<void> {
     return;
   }
 
+  // put 前再查 synced，避免 ACK 先删队列、后写 synced 的窗口里重复入队。
+  if (await storage.getSynced(clientKey)) return;
   await storage.put({
     client_key: built.client_key,
     source: built.source,
@@ -309,12 +313,13 @@ async function flush(): Promise<void> {
 
       const result = await postItem(next);
       if (result.kind === 'success') {
-        await storage.removeByKey(next.client_key);
+        // 先写 synced 再删队列，避免中间窗口被并发 enqueue 当成「既无队列又未 synced」。
         await storage.putSynced({
           client_key: next.client_key,
           record_id: result.recordId,
           hand_id: next.payload.hand_id,
         });
+        await storage.removeByKey(next.client_key);
         logSync('synced', { handId: next.payload.hand_id, status: 'ok' });
         await refreshStatus();
         continue;
