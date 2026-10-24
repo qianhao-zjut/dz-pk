@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useBankrollStore } from '../store/bankrollStore';
 import { useHandHistoryStore } from '../store/handHistoryStore';
+import { retryFailedHandReviews, useHandReviewSyncStatus } from '../store/handReviewSync';
 import { bankrollAdvice, LEVELS, SCENARIOS, tableFromSelection, type BuyInDepth, type OpponentMix, type ScenarioId, type TableConfig } from '../game/sessionConfig';
 import { HandReview } from './HandReview';
 import { Coins, AlertTriangle, Play, RotateCcw, Settings } from 'lucide-react';
@@ -26,6 +27,9 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
   const hands = useHandHistoryStore((state) => state.hands);
   const autoOpenReview = useHandHistoryStore((state) => state.autoOpenReview);
   const setAutoOpenReview = useHandHistoryStore((state) => state.setAutoOpenReview);
+  const syncPending = useHandReviewSyncStatus((state) => state.pendingCount);
+  const syncFailed = useHandReviewSyncStatus((state) => state.failedCount);
+  const syncPersist = useHandReviewSyncStatus((state) => state.persistAvailable);
 
   const handleSetBankrollClick = () => {
     setBankrollInput(balance.toString());
@@ -162,6 +166,24 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
 
         <div className="mt-6 bg-gray-800 rounded-2xl p-4 border border-gray-700">
           <div className="font-bold mb-3">最近手牌</div>
+          {(syncPending > 0 || syncFailed > 0 || !syncPersist) && (
+            <div className="mb-3 text-xs text-gray-400 flex flex-wrap items-center gap-2">
+              {!syncPersist && <span className="text-amber-400">回顾同步无法持久化（仅本会话内存）</span>}
+              {syncPending > 0 && <span>待同步 {syncPending} 手</span>}
+              {syncFailed > 0 && (
+                <>
+                  <span className="text-red-400">同步失败 {syncFailed} 手</span>
+                  <button
+                    type="button"
+                    onClick={() => { void retryFailedHandReviews(); }}
+                    className="px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
+                  >
+                    重试
+                  </button>
+                </>
+              )}
+            </div>
+          )}
           {hands.length === 0 && <p className="text-sm text-gray-500">还没有已完成的手牌。</p>}
           <div className="space-y-2">
             {[...hands].reverse().map((hand) => (
