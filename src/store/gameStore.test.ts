@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { useGameStore } from './gameStore';
 import type { Player } from './gameStore';
 import type { TableConfig } from '../components/Lobby';
+import type { LiveHand, RecordedAction } from '../game/handRecord';
+import { sessionFromTable } from '../game/sessionConfig';
 import { createDeck } from '../utils/poker';
 import { buildObservation, toNpcSource } from '../ai/observation';
 import { getNpcDiagnostics, getNpcLimits, resetNpcRuntimeForTests, setNpcLimits } from '../ai/runtime';
@@ -531,5 +533,266 @@ describe('NPC 决策接入', () => {
     expect(ai.status).toBe('all-in');
     expect(ai.chips).toBe(0);
     expect(ai.currentBet).toBe(30);
+  });
+});
+
+const NOVICE: TableConfig = { id: 't1', name: '新手桌 ($1/$2)', smallBlind: 1, bigBlind: 2, buyIn: 200 };
+const UNSAFE_CHIP = Number.MAX_SAFE_INTEGER + 1;
+
+const postedBlind = (actorId: string, amount: number, potBefore: number, seq: number): RecordedAction => ({
+  actionSeq: seq,
+  actorId,
+  street: 'preflop',
+  kind: 'post',
+  board: [],
+  potBefore,
+  currentBetBefore: 0,
+  currentMaxBetBefore: 0,
+  callCost: 0,
+  amountAdded: amount,
+  raiseTo: amount,
+  raiseIncrement: null,
+  allIn: false,
+  npc: null,
+});
+
+/** 行动数组必须先深复制。liveHand.actions 会被原地 push，直接保存引用会让断言跟着变。 */
+const actionSnapshot = () => {
+  const state = useGameStore.getState();
+  return {
+    gameLog: [...state.gameLog],
+    streetActions: state.streetActions.map((action) => ({ ...action })),
+    liveActions: state.liveHand
+      ? state.liveHand.actions.map((action) => ({
+        ...action,
+        board: [...action.board],
+        npc: action.npc ? { ...action.npc, assumptions: [...action.npc.assumptions] } : null,
+      }))
+      : null,
+    currentPlayerIndex: state.currentPlayerIndex,
+    pot: state.pot,
+    chips: state.players.map((player) => player.chips),
+    currentBets: state.players.map((player) => player.currentBet),
+    invested: state.players.map((player) => player.invested),
+    decisionRevision: state.decisionRevision,
+    stage: state.stage,
+    currentMaxBet: state.currentMaxBet,
+    lastRaiseSize: state.lastRaiseSize,
+  };
+};
+
+const expectMoneyUnchanged = (before: ReturnType<typeof actionSnapshot>) => {
+  const state = useGameStore.getState();
+  expect(state.gameLog).toEqual(before.gameLog);
+  expect(state.streetActions).toEqual(before.streetActions);
+  expect(state.liveHand?.actions ?? null).toEqual(before.liveActions);
+  expect(state.currentPlayerIndex).toBe(before.currentPlayerIndex);
+  expect(state.pot).toBe(before.pot);
+  expect(state.players.map((player) => player.chips)).toEqual(before.chips);
+  expect(state.players.map((player) => player.currentBet)).toEqual(before.currentBets);
+  expect(state.players.map((player) => player.invested)).toEqual(before.invested);
+  expect(state.decisionRevision).toBe(before.decisionRevision);
+  expect(state.stage).toBe(before.stage);
+  expect(state.currentMaxBet).toBe(before.currentMaxBet);
+  expect(state.lastRaiseSize).toBe(before.lastRaiseSize);
+};
+
+const btnLiveHand = (): LiveHand => ({
+  sessionId: 's',
+  handNumber: 1,
+  startedAt: '2026-10-24T00:00:00.000Z',
+  config: sessionFromTable(NOVICE),
+  dealerIndex: 0,
+  seats: [],
+  actions: [postedBlind('sb', 1, 0, 1), postedBlind('bb', 2, 1, 2)],
+});
+
+/** 四人 $1/$2，各 200。UTG 已弃牌，轮到 BTN，池里只有两盲。 */
+const setupBtnToAct = () => {
+  useGameStore.setState({
+    table: NOVICE,
+    stage: 'preflop',
+    pot: 3,
+    board: [],
+    deck: ['Ah', 'Kh', 'Qh', 'Jh', 'Th'],
+    players: [
+      makePlayer({ id: 'btn', name: 'BTN', isAI: false, chips: 200, cards: ['2c', '3d'] }),
+      makePlayer({ id: 'sb', name: 'SB', chips: 199, currentBet: 1, invested: 1, cards: ['4c', '5d'] }),
+      makePlayer({ id: 'bb', name: 'BB', chips: 198, currentBet: 2, invested: 2, cards: ['6c', '7d'] }),
+      makePlayer({ id: 'utg', name: 'UTG', chips: 200, status: 'folded', hasActed: true, cards: ['8c', '9d'] }),
+    ],
+    dealerIndex: 0,
+    handDealerIndex: 0,
+    currentPlayerIndex: 0,
+    currentMaxBet: 2,
+    lastRaiseSize: 2,
+    gameLog: ['UTG 弃牌'],
+    handNumber: 1,
+    sessionId: 's',
+    decisionRevision: 3,
+    streetActions: [
+      { actorId: 'sb', stage: 'preflop', kind: 'post', to: 1 },
+      { actorId: 'bb', stage: 'preflop', kind: 'post', to: 2 },
+      { actorId: 'utg', stage: 'preflop', kind: 'fold', to: null },
+    ],
+    liveHand: btnLiveHand(),
+  });
+};
+
+const expectSafeMoney = () => {
+  const state = useGameStore.getState();
+  const amounts = [state.pot, ...state.players.map((player) => player.chips)];
+  for (const amount of amounts) {
+    expect(Number.isSafeInteger(amount)).toBe(true);
+    expect(amount).toBeGreaterThanOrEqual(0);
+  }
+};
+
+const chipsPlusPot = () => {
+  const state = useGameStore.getState();
+  return state.players.reduce((sum, player) => sum + player.chips, 0) + state.pot;
+};
+
+const checkAroundToShowdown = () => {
+  for (let guard = 0; guard < 16 && useGameStore.getState().stage !== 'showdown'; guard++) {
+    const state = useGameStore.getState();
+    const actor = state.players[state.currentPlayerIndex];
+    expect(actor.status).toBe('active');
+    if (actor.currentBet < state.currentMaxBet) state.playerCall();
+    else state.playerCheck();
+  }
+  expect(useGameStore.getState().stage).toBe('showdown');
+};
+
+describe('P1 非法金额不得进入动作链', () => {
+  it.each([6.5, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -1, -6.5, UNSAFE_CHIP])(
+    'playerRaise(%s) 不写日志、行动、轮次和资金',
+    (amount) => {
+      setupBtnToAct();
+      const before = actionSnapshot();
+      useGameStore.getState().playerRaise(amount);
+      expectMoneyUnchanged(before);
+      expect(useGameStore.getState().pot).not.toBe(19.5);
+    },
+  );
+});
+
+describe('合法整数加注、分池和下一手守恒', () => {
+  it.each([6, 7])('公共牌三人平分加到 %s 后结算和下一手守恒', (raiseTo) => {
+    setupBtnToAct();
+    useGameStore.getState().playerRaise(raiseTo);
+    expect(useGameStore.getState().currentPlayerIndex).toBe(1);
+    useGameStore.getState().playerCall();
+    expect(useGameStore.getState().currentPlayerIndex).toBe(2);
+    useGameStore.getState().playerCall();
+    expect(useGameStore.getState().pot).toBe(raiseTo * 3);
+    expectSafeMoney();
+
+    checkAroundToShowdown();
+    const shown = useGameStore.getState();
+    expect(shown.board).toEqual(['Th', 'Jh', 'Qh', 'Kh', 'Ah']);
+    expect(shown.pot).toBe(0);
+    expect(shown.players.map((player) => player.chips)).toEqual([200, 200, 200, 200]);
+    expect(chipsPlusPot()).toBe(800);
+    expectSafeMoney();
+
+    useGameStore.getState().startHand();
+    const next = useGameStore.getState();
+    expect(next.stage).toBe('preflop');
+    expect(next.pot).toBe(3);
+    expect(chipsPlusPot()).toBe(800);
+    expectSafeMoney();
+  });
+
+  it('含死钱的三人平分余筹发完，余池为 0，下一手守恒', () => {
+    setupMidHand([
+      makePlayer({ id: 'btn', name: 'BTN', isAI: false, cards: ['2c', '3d'], chips: 194, invested: 6 }),
+      makePlayer({ id: 'sb', name: 'SB', cards: ['4c', '5d'], chips: 194, invested: 6 }),
+      makePlayer({ id: 'bb', name: 'BB', cards: ['6c', '7d'], chips: 194, invested: 6 }),
+      makePlayer({ id: 'utg', name: 'UTG', cards: ['8c', '9d'], chips: 198, invested: 2, status: 'folded' }),
+    ], { currentPlayerIndex: 0, currentMaxBet: 0, lastRaiseSize: 2, pot: 20, stage: 'river' });
+    useGameStore.setState({
+      table: NOVICE,
+      board: ['Th', 'Jh', 'Qh', 'Kh', 'Ah'],
+      dealerIndex: 0,
+      handDealerIndex: 0,
+      handNumber: 1,
+      sessionId: 's',
+    });
+
+    expect(chipsPlusPot()).toBe(800);
+    useGameStore.getState().handleShowdown();
+
+    const shown = useGameStore.getState();
+    expect(shown.pot).toBe(0);
+    expect(shown.players.map((player) => player.chips)).toEqual([200, 201, 201, 198]);
+    expect(chipsPlusPot()).toBe(800);
+    expectSafeMoney();
+
+    useGameStore.getState().startHand();
+    expect(useGameStore.getState().stage).toBe('preflop');
+    expect(chipsPlusPot()).toBe(800);
+    expectSafeMoney();
+  });
+});
+
+describe('合法整数仍走原有尺寸归一', () => {
+  it('筹码够却低于最小加注时钳制到最小加注', () => {
+    setupMidHand([
+      makePlayer({ id: 'ai_0', currentBet: 0, chips: 1000 }),
+      makePlayer({ id: 'ai_1', currentBet: 100, hasActed: true, chips: 900 }),
+    ], { currentPlayerIndex: 0, currentMaxBet: 100, lastRaiseSize: 90, pot: 100 });
+
+    useGameStore.getState().playerRaise(130);
+
+    const state = useGameStore.getState();
+    expect(state.players[0].currentBet).toBe(190);
+    expect(state.currentMaxBet).toBe(190);
+    expect(state.lastRaiseSize).toBe(90);
+  });
+
+  it('超过自身筹码的加注被封顶为全下', () => {
+    setupBtnToAct();
+    useGameStore.getState().playerRaise(10000);
+
+    const btn = useGameStore.getState().players[0];
+    expect(btn.chips).toBe(0);
+    expect(btn.currentBet).toBe(200);
+    expect(btn.status).toBe('all-in');
+    expect(useGameStore.getState().currentMaxBet).toBe(200);
+    expect(chipsPlusPot()).toBe(800);
+    expectSafeMoney();
+  });
+
+  it('短码全下低于当前最高注时不拉低最高注', () => {
+    setupMidHand([
+      makePlayer({ id: 'ai_0', currentBet: 100, hasActed: true, chips: 900 }),
+      makePlayer({ id: 'ai_1', currentBet: 0, chips: 900 }),
+      makePlayer({ id: 'human', isAI: false, currentBet: 0, chips: 50 }),
+    ], { currentPlayerIndex: 2, currentMaxBet: 100, lastRaiseSize: 90, pot: 100 });
+
+    useGameStore.getState().playerRaise(50);
+
+    const state = useGameStore.getState();
+    expect(state.currentMaxBet).toBe(100);
+    expect(state.players[2].status).toBe('all-in');
+    expect(state.players[2].chips).toBe(0);
+    expect(state.pot).toBe(150);
+  });
+
+  it('没有加注权限时整数加注降级为跟注', () => {
+    setupMidHand([
+      makePlayer({ id: 'ai_0', currentBet: 100, hasActed: true, canRaise: false, chips: 900 }),
+      makePlayer({ id: 'ai_1', currentBet: 130, status: 'all-in', chips: 0 }),
+      makePlayer({ id: 'ai_2', currentBet: 0, chips: 900 }),
+    ], { currentPlayerIndex: 0, currentMaxBet: 130, lastRaiseSize: 90, pot: 330 });
+
+    useGameStore.getState().playerRaise(500);
+
+    const state = useGameStore.getState();
+    expect(state.players[0].currentBet).toBe(130);
+    expect(state.currentMaxBet).toBe(130);
+    expect(state.lastRaiseSize).toBe(90);
+    expect(state.players[0].chips).toBe(870);
   });
 });

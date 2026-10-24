@@ -1,3 +1,4 @@
+import { isPayableChipAmount } from '../game/chipAmount';
 import { useGameStore } from '../store/gameStore';
 
 export type ActName = 'fold' | 'check' | 'call' | 'raise' | 'allin' | 'deal' | 'rebuy';
@@ -81,11 +82,8 @@ export function applyExternalAction(
     return { ok: true, action };
   }
   if (!human.canRaise || human.chips <= 0) return fail(action, 'illegal_action');
-  if (action === 'allin') {
-    s.playerRaise(human.chips + human.currentBet);
-    return { ok: true, action };
-  }
-  if (!Number.isInteger(cmd.to) || (cmd.to ?? 0) < 0) return fail(action, 'bad_amount');
-  s.playerRaise(cmd.to as number);
+  const raiseTo = action === 'allin' ? human.chips + human.currentBet : cmd.to;
+  if (!isPayableChipAmount(raiseTo)) return fail(action, 'bad_amount');
+  if (!s.playerRaise(raiseTo)) return fail(action, 'bad_amount');
   return { ok: true, action };
 }

@@ -6,6 +6,7 @@ import { AlertTriangle, Coins } from 'lucide-react';
 import { CardUI } from './CardUI';
 import { TeachingPanel } from './TeachingPanel';
 import { HandReview } from './HandReview';
+import { confirmTypedRaise } from '../game/chipAmount';
 import { quoteCall } from '../game/priceQuote';
 import { actionShortcuts, raiseVerb, type StreetName } from '../game/shortcuts';
 import { seatRole, stackText } from '../game/positions';
@@ -40,9 +41,10 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
   const [showBrokeModal, setShowBrokeModal] = useState(false);
   const [showAllInModal, setShowAllInModal] = useState(false);
 
-  // 加注尺寸面板（滑杆 + 快捷按钮）
+  // 加注尺寸面板（滑杆 + 快捷按钮）。手输金额保持原始字符串，确认时才转换。
   const [showRaisePanel, setShowRaisePanel] = useState(false);
-  const [raiseSize, setRaiseSize] = useState(0);
+  const [raiseText, setRaiseText] = useState('');
+  const [raiseError, setRaiseError] = useState<string | null>(null);
 
   // 轮到别人行动时自动收起加注面板
   const isHumanTurnNow = stage !== 'idle' && stage !== 'showdown' && players[currentPlayerIndex]?.id === 'human';
@@ -121,12 +123,28 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
   const latestHand = [...hands].reverse().find((hand) => hand.sessionId === sessionId) ?? null;
 
   const openRaisePanel = () => {
-    setRaiseSize(plan.defaultRaiseTo ?? raiseMin);
+    setRaiseText(String(plan.defaultRaiseTo ?? raiseMin));
+    setRaiseError(null);
     setShowRaisePanel(true);
   };
 
+  const trimmedRaise = raiseText.trim();
+  const preview = trimmedRaise === '' ? null : Number(trimmedRaise);
+  const previewFinite = preview != null && Number.isFinite(preview) ? preview : null;
+  const addedPreview = previewFinite == null ? null : Math.max(0, previewFinite - (human?.currentBet || 0));
+  const sliderValue = previewFinite != null && previewFinite >= raiseMin && previewFinite <= raiseMax
+    ? previewFinite
+    : raiseMin;
+
   const handleRaiseConfirm = () => {
-    playerRaise(raiseSize);
+    const result = confirmTypedRaise(raiseText, { min: raiseMin, max: raiseMax });
+    if (result.submit == null) {
+      setRaiseError(result.error);
+      setShowRaisePanel(true);
+      return;
+    }
+    playerRaise(result.submit);
+    setRaiseError(null);
     setShowRaisePanel(false);
   };
 
@@ -402,8 +420,8 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
             <div className="flex flex-col items-center gap-2 w-full max-w-md px-2">
               <div className="flex items-baseline gap-2">
                 <span className="text-gray-300 text-sm">{verb}到</span>
-                <span className="text-yellow-400 font-bold text-2xl">${raiseSize}</span>
-                <span className="text-gray-500 text-xs">(再投入 ${Math.max(0, raiseSize - human.currentBet)})</span>
+                <span className="text-yellow-400 font-bold text-2xl">${raiseText === '' ? '—' : raiseText}</span>
+                <span className="text-gray-500 text-xs">(再投入 {addedPreview == null ? '—' : `$${addedPreview}`})</span>
               </div>
 
               <input
@@ -411,9 +429,12 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                 min={raiseMin}
                 max={raiseMax}
                 step={1}
-                value={raiseSize}
+                value={sliderValue}
                 disabled={raiseMin >= raiseMax}
-                onChange={(e) => setRaiseSize(Number(e.target.value))}
+                onChange={(e) => {
+                  setRaiseText(e.target.value);
+                  setRaiseError(null);
+                }}
                 className="w-full accent-purple-500 disabled:opacity-40"
               />
               <div className="flex justify-between w-full text-[10px] text-gray-500 -mt-1">
@@ -425,9 +446,12 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                 {plan.shortcuts.map((shortcut) => (
                   <button
                     key={shortcut.id}
-                    onClick={() => setRaiseSize(shortcut.raiseTo)}
+                    onClick={() => {
+                      setRaiseText(String(shortcut.raiseTo));
+                      setRaiseError(null);
+                    }}
                     className={`px-3 py-1 rounded-lg text-xs sm:text-sm font-bold transition-all ${
-                      raiseSize === shortcut.raiseTo ? 'bg-purple-600 ring-2 ring-purple-400' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                      raiseText === String(shortcut.raiseTo) ? 'bg-purple-600 ring-2 ring-purple-400' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
                     }`}
                   >
                     {shortcut.label}
@@ -435,17 +459,23 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                 ))}
               </div>
               <input
-                type="number"
-                min={raiseMin}
-                max={raiseMax}
-                value={raiseSize}
-                onChange={(event) => setRaiseSize(Number(event.target.value))}
+                type="text"
+                inputMode="decimal"
+                value={raiseText}
+                onChange={(event) => {
+                  setRaiseText(event.target.value);
+                  setRaiseError(null);
+                }}
                 className="w-28 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm"
               />
+              {raiseError && <p className="text-red-400 text-xs text-center">{raiseError}</p>}
 
               <div className="flex gap-3 mt-1">
                 <button
-                  onClick={() => setShowRaisePanel(false)}
+                  onClick={() => {
+                    setShowRaisePanel(false);
+                    setRaiseError(null);
+                  }}
                   className="px-4 sm:px-6 py-2 rounded-xl font-bold bg-gray-700 hover:bg-gray-600 transition-all"
                 >
                   取消
@@ -454,7 +484,7 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                   onClick={handleRaiseConfirm}
                   className="px-4 sm:px-6 py-2 rounded-xl font-bold bg-purple-600 hover:bg-purple-500 transition-all"
                 >
-                  确认{verb} ${raiseSize}
+                  确认{verb} {raiseText}
                 </button>
               </div>
             </div>

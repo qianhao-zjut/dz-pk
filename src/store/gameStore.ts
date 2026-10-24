@@ -6,6 +6,7 @@ import { profileFor } from '../ai/profiles';
 import { getNpcLimits, invalidateNpcRuntime, npcDecisionRng, npcYieldBetweenBatches, runNpcDecision } from '../ai/runtime';
 import type { PublicAction } from '../ai/types';
 import { isBettingStage } from '../ai/types';
+import { isPayableChipAmount } from '../game/chipAmount';
 import { handId, type LiveHand, type PotPayout, type RecordedAction } from '../game/handRecord';
 import { seatRole } from '../game/positions';
 import { sessionFromTable } from '../game/sessionConfig';
@@ -76,7 +77,7 @@ interface GameState {
   playerFold: (npc?: NpcActionContext) => void;
   playerCall: (npc?: NpcActionContext) => void;
   playerCheck: (npc?: NpcActionContext) => void;
-  playerRaise: (totalBetAmount: number, npc?: NpcActionContext) => void;
+  playerRaise: (totalBetAmount: number, npc?: NpcActionContext) => boolean;
   
   // Internal engine
   advanceTurn: () => void;
@@ -417,9 +418,11 @@ export const useGameStore = create<GameState>((set, get) => {
   },
 
   playerRaise: (totalBetAmount: number, npc) => {
+    // 小数、NaN、无穷、负数和不安全整数在记日志或改状态之前拒绝。合法整数继续走尺寸归一。
+    if (!isPayableChipAmount(totalBetAmount)) return false;
     const { players, currentPlayerIndex, pot, currentMaxBet, lastRaiseSize, stage } = get();
     const p = players[currentPlayerIndex];
-    if (!p || p.status !== 'active') return;
+    if (!p || p.status !== 'active') return false;
 
     // 目标至少为跟注额；没有加注权限时（面对不完整 All-in 已行动过的玩家）只能跟注
     let target = Math.max(totalBetAmount, currentMaxBet);
@@ -499,6 +502,7 @@ export const useGameStore = create<GameState>((set, get) => {
       },
     );
     get().advanceTurn();
+    return true;
   },
 
   advanceTurn: () => {
