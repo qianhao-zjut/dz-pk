@@ -1,9 +1,12 @@
 import { estimateEquityInBatches } from './equity';
 import { executeDecision, type ExecuteResult, type LiveTurn, type NpcTableActions } from './executor';
+import type { NpcActionContext } from './npcContext';
 import { buildObservation } from './observation';
+import { stackDepth } from './preflop';
+import { preflopPrice } from './preflopPrice';
 import { decide, type Decided, type DecideOptions } from './strategy';
 import type { AIProfile } from './profiles';
-import { isBettingStage, type AIDiagnosis, type NpcSourceInput } from './types';
+import { isBettingStage, type AIDiagnosis, type AIObservation, type NpcSourceInput } from './types';
 
 export interface NpcLimits {
   samples: number;
@@ -14,6 +17,32 @@ export interface NpcLimits {
 
 // 本机 Node 上，3 人翻牌 2000 次同步抽样约 100ms，超过 50ms。
 // 默认只抽 200 次，并按 40 次一批让出主线程；单批约数毫秒。40ms 预算到点就返回已完成样本。
+let decideOverride: ((obs: import('./types').AIObservation, profile: AIProfile, options?: DecideOptions) => Decided) | null = null;
+let decisionRng: (() => number) | null = null;
+let yieldOverride: boolean | null = null;
+
+export function setDecideOverrideForTests(
+  fn: ((obs: import('./types').AIObservation, profile: AIProfile, options?: DecideOptions) => Decided) | null,
+): void {
+  decideOverride = fn;
+}
+
+export function setNpcDecisionRngForTests(rng: (() => number) | null): void {
+  decisionRng = rng;
+}
+
+export function npcDecisionRng(): (() => number) | undefined {
+  return decisionRng ?? undefined;
+}
+
+export function setNpcYieldForTests(value: boolean | null): void {
+  yieldOverride = value;
+}
+
+export function npcYieldBetweenBatches(): boolean {
+  return yieldOverride ?? true;
+}
+
 let limits: NpcLimits = {
   samples: 200,
   timeBudgetMs: 40,
@@ -76,6 +105,25 @@ export type RunResult =
   | ExecuteResult
   | { ok: false; reason: 'in-flight' | 'fallback' | 'duplicate' | 'stale'; applied?: import('./types').AIAction; detail?: string };
 
+function contextFor(observation: AIObservation, diagnosis: AIDiagnosis): NpcActionContext {
+  return {
+    turnToken: observation.turnToken,
+    actorId: observation.actorId,
+    reasonCode: diagnosis.reasonCode,
+    profileId: diagnosis.profileId,
+    position: diagnosis.position,
+    handKey: diagnosis.handKey,
+    priceTier: observation.stage === 'preflop' ? preflopPrice(observation).tier : diagnosis.priceTier ?? null,
+    stackDepth: diagnosis.stackDepth ?? stackDepth(observation),
+    samples: diagnosis.samples,
+    equity: diagnosis.equity,
+    evReference: diagnosis.evReference,
+    assumptions: diagnosis.assumptions,
+    fallback: diagnosis.fallback === true || diagnosis.reasonCode.startsWith('fallback') || diagnosis.reasonCode === 'equity-fallback',
+    rngDraw: diagnosis.rngDraw ?? null,
+  };
+}
+
 function fallback(args: RunNpcArgs, token: string, detail: string): RunResult {
   const live = args.readLive();
   if (!live.tableExists || !live.betting || live.actorStatus !== 'active' || live.turnToken !== token || !live.actorId) {
@@ -86,6 +134,22 @@ function fallback(args: RunNpcArgs, token: string, detail: string): RunResult {
     { turnToken: token, actorId: live.actorId, move },
     args.readLive,
     args.actions,
+    {
+      turnToken: token,
+      actorId: live.actorId,
+      reasonCode: move.action === 'check' ? 'fallback-check' : 'fallback-fold',
+      profileId: args.profile.id,
+      position: null,
+      handKey: null,
+      priceTier: null,
+      stackDepth: null,
+      samples: 0,
+      equity: null,
+      evReference: null,
+      assumptions: [detail],
+      fallback: true,
+      rngDraw: null,
+    },
   );
   const stage = isBettingStage(args.source.stage) ? args.source.stage : 'preflop';
   remember({
@@ -108,6 +172,10 @@ function fallback(args: RunNpcArgs, token: string, detail: string): RunResult {
 
 async function compute(args: RunNpcArgs, observation: import('./types').AIObservation, job: { aborted: boolean }, epochAtStart: number): Promise<Decided | null> {
   if (args.decideFn) return await args.decideFn(observation);
+  if (decideOverride) {
+    if (job.aborted || epochAtStart !== epoch) return null;
+    return decideOverride(observation, args.profile, args.options);
+  }
   if (job.aborted || epochAtStart !== epoch) return null;
   if (observation.stage === 'preflop') return decide(observation, args.profile, args.options);
   const current = getNpcLimits();
@@ -177,7 +245,12 @@ export async function runNpcDecision(args: RunNpcArgs): Promise<RunResult> {
       }
       if (!computed) return once(fallback(args, token, 'no-decision'));
       remember(computed.diagnosis);
-      return once(executeDecision(computed.decision, args.readLive, args.actions));
+      return once(executeDecision(
+        computed.decision,
+        args.readLive,
+        args.actions,
+        contextFor(built.observation, computed.diagnosis),
+      ));
     } catch {
       if (settled || epochAtStart !== epoch || args.readLive().turnToken !== token) {
         return once({ ok: false, reason: 'stale' });

@@ -20,13 +20,21 @@ export function createDeck(): Card[] {
   return deck;
 }
 
+let shuffleRng: (() => number) | null = null;
+
+/** 只给固定种子试玩使用。正式牌局保持 null，继续用 Math.random。 */
+export function setShuffleRngForTests(rng: (() => number) | null): void {
+  shuffleRng = rng;
+}
+
 /**
  * 随机洗牌（Fisher-Yates 洗牌算法）
  */
 export function shuffleDeck(deck: Card[]): Card[] {
+  const random = shuffleRng ?? Math.random;
   const newDeck = [...deck];
   for (let i = newDeck.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(random() * (i + 1));
     [newDeck[i], newDeck[j]] = [newDeck[j], newDeck[i]];
   }
   return newDeck;

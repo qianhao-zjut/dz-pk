@@ -1,13 +1,19 @@
 import { create } from 'zustand';
 import { emptyLive, liveTurnFrom } from '../ai/executor';
+import type { NpcActionContext } from '../ai/npcContext';
 import { toNpcSource } from '../ai/observation';
 import { profileFor } from '../ai/profiles';
-import { invalidateNpcRuntime, runNpcDecision, getNpcLimits } from '../ai/runtime';
+import { getNpcLimits, invalidateNpcRuntime, npcDecisionRng, npcYieldBetweenBatches, runNpcDecision } from '../ai/runtime';
 import type { PublicAction } from '../ai/types';
 import { isBettingStage } from '../ai/types';
+import { handId, type LiveHand, type PotPayout, type RecordedAction } from '../game/handRecord';
+import { seatRole } from '../game/positions';
+import { sessionFromTable } from '../game/sessionConfig';
+import { raiseVerb } from '../game/shortcuts';
 import type { Card } from '../utils/poker';
 import { createDeck, shuffleDeck, compareHands, handNameCN } from '../utils/poker';
 import type { TableConfig } from '../components/Lobby';
+import { useHandHistoryStore } from './handHistoryStore';
 
 export type GameStage = 'idle' | 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
 export type PlayerStatus = 'active' | 'folded' | 'all-in' | 'sitting-out';
@@ -16,6 +22,7 @@ export interface Player {
   id: string;
   name: string;
   isAI: boolean;
+  profileId?: string;
   chips: number;
   cards: Card[];
   currentBet: number;
@@ -39,6 +46,9 @@ interface GameState {
   
   players: Player[];
   dealerIndex: number;
+  /** 本手按钮。结算时 dealerIndex 会提前轮到下一手，展示和回顾用这个。 */
+  handDealerIndex: number;
+  liveHand: LiveHand | null;
   currentPlayerIndex: number;
   currentMaxBet: number;
   // 上一次完整加注的增量（决定最小加注额 = currentMaxBet + lastRaiseSize）
@@ -63,10 +73,10 @@ interface GameState {
   startHand: () => void;
   
   // Player actions
-  playerFold: () => void;
-  playerCall: () => void;
-  playerCheck: () => void;
-  playerRaise: (totalBetAmount: number) => void;
+  playerFold: (npc?: NpcActionContext) => void;
+  playerCall: (npc?: NpcActionContext) => void;
+  playerCheck: (npc?: NpcActionContext) => void;
+  playerRaise: (totalBetAmount: number, npc?: NpcActionContext) => void;
   
   // Internal engine
   advanceTurn: () => void;
@@ -76,8 +86,6 @@ interface GameState {
   actAI: () => Promise<void>;
   rebuy: (playerId: string, amount: number) => void;
 }
-
-const STARTING_AI_NAMES = ['德州老手', '激进小伙', '保守大叔'];
 
 export const useGameStore = create<GameState>((set, get) => {
   const commit = (partial: Partial<GameState>) => {
@@ -89,6 +97,38 @@ export const useGameStore = create<GameState>((set, get) => {
       streetActions: action ? [...get().streetActions, action] : get().streetActions,
     });
   };
+  const record = (
+    kind: RecordedAction['kind'],
+    actor: Player,
+    extra: {
+      amountAdded: number;
+      raiseTo: number | null;
+      raiseIncrement: number | null;
+      allIn: boolean;
+      npc?: NpcActionContext;
+    },
+  ) => {
+    const live = get().liveHand;
+    const stage = get().stage;
+    if (!live || !isBettingStage(stage)) return;
+    const toCall = Math.max(0, get().currentMaxBet - actor.currentBet);
+    live.actions.push({
+      actionSeq: live.actions.length + 1,
+      actorId: actor.id,
+      street: stage,
+      kind,
+      board: [...get().board],
+      potBefore: get().pot,
+      currentBetBefore: actor.currentBet,
+      currentMaxBetBefore: get().currentMaxBet,
+      callCost: Math.min(Math.max(0, actor.chips), toCall),
+      amountAdded: extra.amountAdded,
+      raiseTo: extra.raiseTo,
+      raiseIncrement: extra.raiseIncrement,
+      allIn: extra.allIn,
+      npc: extra.npc ? { ...extra.npc, assumptions: [...extra.npc.assumptions] } : null,
+    });
+  };
 
   return {
   table: null,
@@ -98,6 +138,8 @@ export const useGameStore = create<GameState>((set, get) => {
   deck: [],
   players: [],
   dealerIndex: 0,
+  handDealerIndex: 0,
+  liveHand: null,
   currentPlayerIndex: -1,
   currentMaxBet: 0,
   lastRaiseSize: 0,
@@ -113,31 +155,33 @@ export const useGameStore = create<GameState>((set, get) => {
 
   joinTable: (table: TableConfig, humanBuyIn: number) => {
     invalidateNpcRuntime();
-    // 初始化玩家（1名人类 + 3名AI）
+    useHandHistoryStore.getState().cancelPending();
+    const session = sessionFromTable({ ...table, buyIn: humanBuyIn });
     const newPlayers: Player[] = [
       { id: 'human', name: '你 (Player)', isAI: false, chips: humanBuyIn, cards: [], currentBet: 0, invested: 0, status: 'active', hasActed: false, canRaise: true },
     ];
-    
-    // 给AI加上和桌子标准买入相近的筹码
-    STARTING_AI_NAMES.forEach((name, i) => {
+    session.npcs.forEach((npc) => {
       newPlayers.push({
-        id: `ai_${i}`,
-        name,
+        id: npc.id,
+        name: npc.name,
         isAI: true,
-        chips: table.buyIn,
+        profileId: npc.profileId,
+        chips: humanBuyIn,
         cards: [],
         currentBet: 0,
         invested: 0,
         status: 'active',
         hasActed: false,
-        canRaise: true
+        canRaise: true,
       });
     });
 
     commit({
-      table,
+      table: { ...table, buyIn: humanBuyIn, scenarioId: session.scenarioId, buyInBb: session.buyInBb, opponents: session.opponents, npcs: session.npcs },
       players: newPlayers,
       dealerIndex: 0,
+      handDealerIndex: 0,
+      liveHand: null,
       stage: 'idle',
       handNumber: 0,
       sessionId: new Date().toISOString(),
@@ -148,6 +192,7 @@ export const useGameStore = create<GameState>((set, get) => {
 
   leaveTable: () => {
     invalidateNpcRuntime();
+    useHandHistoryStore.getState().cancelPending();
     const { players } = get();
     const human = players.find(p => p.id === 'human');
     const returnedChips = human ? human.chips : 0;
@@ -159,6 +204,8 @@ export const useGameStore = create<GameState>((set, get) => {
       pot: 0,
       board: [],
       handNumber: 0,
+      handDealerIndex: 0,
+      liveHand: null,
       sessionId: null,
       streetActions: [],
       gameLog: []
@@ -169,8 +216,10 @@ export const useGameStore = create<GameState>((set, get) => {
 
   startHand: () => {
     invalidateNpcRuntime();
-    const { players, dealerIndex, table, handNumber } = get();
+    useHandHistoryStore.getState().cancelPending();
+    const { players, dealerIndex, table, handNumber, sessionId } = get();
     if (!table) return;
+    const activeSession = sessionId ?? new Date().toISOString();
 
     const deck = shuffleDeck(createDeck());
     // 重买日志先收集到局部数组，避免被下面的 gameLog 重置吞掉
@@ -206,6 +255,7 @@ export const useGameStore = create<GameState>((set, get) => {
     // 盲注逻辑 (简化处理，假设4人都在)
     const sbIndex = (dealerIndex + 1) % updatedPlayers.length;
     const bbIndex = (dealerIndex + 2) % updatedPlayers.length;
+    const chipsBefore = updatedPlayers.map((player) => player.chips);
     let pot = 0;
 
     const postBlind = (index: number, amount: number) => {
@@ -240,6 +290,42 @@ export const useGameStore = create<GameState>((set, get) => {
       .filter(p => p.status !== 'sitting-out')
       .map(p => `${p.name} $${p.chips + p.currentBet}`)
       .join(' / ');
+    const blindAction = (index: number, amount: number, potBefore: number, seq: number): RecordedAction => ({
+      actionSeq: seq,
+      actorId: updatedPlayers[index].id,
+      street: 'preflop',
+      kind: 'post',
+      board: [],
+      potBefore,
+      currentBetBefore: 0,
+      currentMaxBetBefore: 0,
+      callCost: 0,
+      amountAdded: amount,
+      raiseTo: amount,
+      raiseIncrement: null,
+      allIn: updatedPlayers[index].status === 'all-in',
+      npc: null,
+    });
+    const liveHand: LiveHand = {
+      sessionId: activeSession,
+      handNumber: handNumber + 1,
+      startedAt: new Date().toISOString(),
+      config: sessionFromTable(table),
+      dealerIndex,
+      seats: updatedPlayers.map((player, seat) => ({
+        id: player.id,
+        name: player.name,
+        profileId: player.profileId ?? null,
+        style: player.profileId ? profileFor(player.profileId).label : null,
+        role: seatRole(seat, dealerIndex, updatedPlayers.length),
+        chipsBefore: chipsBefore[seat],
+        holeCards: [...player.cards],
+      })),
+      actions: [
+        blindAction(sbIndex, sbAmount, 0, 1),
+        blindAction(bbIndex, bbAmount, sbAmount, 2),
+      ],
+    };
 
     commit({
       stage: 'preflop',
@@ -247,18 +333,20 @@ export const useGameStore = create<GameState>((set, get) => {
       board: [],
       players: updatedPlayers,
       pot,
+      handDealerIndex: dealerIndex,
+      liveHand,
       // 要跟的注是实际盲注里较大的那个；短码不足一个大盲时不能把最高注抬到大盲
       currentMaxBet: Math.max(sbAmount, bbAmount),
       lastRaiseSize: table.bigBlind,
       currentPlayerIndex: utgIndex,
       handNumber: handNumber + 1,
+      sessionId: activeSession,
       streetActions: [
         { actorId: updatedPlayers[sbIndex].id, stage: 'preflop', kind: 'post', to: sbAmount },
         { actorId: updatedPlayers[bbIndex].id, stage: 'preflop', kind: 'post', to: bbAmount },
       ],
       gameLog: [
         `--- 第 ${handNumber + 1} 手牌开始 (庄家: ${updatedPlayers[dealerIndex].name}) ---`,
-        `牌面记法: 点数(2-9,T,J,Q,K,A)+花色(s=♠黑桃 h=♥红桃 d=♦方块 c=♣梅花)，如 Ah=红桃A`,
         ...rebuyLogs,
         `${updatedPlayers[sbIndex].name} 下小盲 $${sbAmount}, ${updatedPlayers[bbIndex].name} 下大盲 $${bbAmount}`,
         `带入筹码: ${stacksInfo}`,
@@ -267,9 +355,10 @@ export const useGameStore = create<GameState>((set, get) => {
     });
   },
 
-  playerFold: () => {
+  playerFold: (npc) => {
     const { players, currentPlayerIndex, stage } = get();
     const p = players[currentPlayerIndex];
+    record('fold', p, { amountAdded: 0, raiseTo: null, raiseIncrement: null, allIn: false, npc });
     
     const newPlayers = [...players];
     newPlayers[currentPlayerIndex] = { ...p, status: 'folded', hasActed: true };
@@ -279,13 +368,14 @@ export const useGameStore = create<GameState>((set, get) => {
     get().advanceTurn();
   },
 
-  playerCall: () => {
+  playerCall: (npc) => {
     const { players, currentPlayerIndex, currentMaxBet, pot } = get();
     const p = players[currentPlayerIndex];
     const amountToCall = Math.max(0, currentMaxBet - p.currentBet);
     
     // 如果筹码不够跟注，则是All-in
     const actualCall = Math.min(p.chips, amountToCall);
+    record('call', p, { amountAdded: actualCall, raiseTo: null, raiseIncrement: null, allIn: p.chips === actualCall && actualCall > 0, npc });
     
     const newPlayers = [...players];
     newPlayers[currentPlayerIndex] = { ...p, hasActed: true };
@@ -313,9 +403,10 @@ export const useGameStore = create<GameState>((set, get) => {
     get().advanceTurn();
   },
 
-  playerCheck: () => {
+  playerCheck: (npc) => {
     const { players, currentPlayerIndex, stage } = get();
     const p = players[currentPlayerIndex];
+    record('check', p, { amountAdded: 0, raiseTo: null, raiseIncrement: null, allIn: false, npc });
     
     const newPlayers = [...players];
     newPlayers[currentPlayerIndex] = { ...p, hasActed: true };
@@ -325,8 +416,8 @@ export const useGameStore = create<GameState>((set, get) => {
     get().advanceTurn();
   },
 
-  playerRaise: (totalBetAmount: number) => {
-    const { players, currentPlayerIndex, pot, currentMaxBet, lastRaiseSize } = get();
+  playerRaise: (totalBetAmount: number, npc) => {
+    const { players, currentPlayerIndex, pot, currentMaxBet, lastRaiseSize, stage } = get();
     const p = players[currentPlayerIndex];
     if (!p || p.status !== 'active') return;
 
@@ -355,6 +446,14 @@ export const useGameStore = create<GameState>((set, get) => {
       newPlayers[currentPlayerIndex].status = 'all-in';
     }
     const isAllIn = newPlayers[currentPlayerIndex].status === 'all-in';
+    const verb = isBettingStage(stage) ? raiseVerb(stage, currentMaxBet) : '加注';
+    record(increment > 0 ? 'raise' : 'call', p, {
+      amountAdded: actualAdd,
+      raiseTo: increment > 0 ? newBet : null,
+      raiseIncrement: increment > 0 ? increment : null,
+      allIn: isAllIn,
+      npc,
+    });
 
     // currentMaxBet 只允许单调上升，绝不被小额 All-in 拉低
     let newMaxBet = currentMaxBet;
@@ -363,8 +462,8 @@ export const useGameStore = create<GameState>((set, get) => {
     if (increment <= 0) {
       // 实际效果等于跟注（含短码 All-in 跟注），不改变最高下注与最小加注增量
       get().logAction(isAllIn
-        ? `${p.name} 全下跟注 (All-in Call) $${actualAdd}`
-        : `${p.name} 跟注 (Call) $${actualAdd}`);
+        ? `${p.name} 全下跟注 $${actualAdd}`
+        : `${p.name} 跟注 $${actualAdd}`);
     } else if (increment >= lastRaiseSize) {
       // 完整加注：更新最高下注与最小加注增量，行动对所有玩家重新开放
       newMaxBet = newBet;
@@ -373,8 +472,8 @@ export const useGameStore = create<GameState>((set, get) => {
         newPlayers[i] = { ...pl, canRaise: true };
       });
       get().logAction(isAllIn
-        ? `${p.name} 全下加注 (All-in Raise) 到 $${newBet}`
-        : `${p.name} 加注 (Raise) 到 $${newBet}`);
+        ? `${p.name} 全下${verb}到 $${newBet}`
+        : `${p.name} ${verb}到 $${newBet}`);
     } else {
       // 不完整 All-in 加注（筹码不足最小加注额）：
       // 大家必须跟到这个数额，但不构成真正加注——
@@ -388,7 +487,6 @@ export const useGameStore = create<GameState>((set, get) => {
       get().logAction(`${p.name} 全下到 $${newBet} (All-in，不足最小加注额，已行动玩家不可再加注)`);
     }
 
-    const stage = get().stage;
     note(
       isBettingStage(stage)
         ? { actorId: p.id, stage, kind: increment > 0 ? 'raise' : 'call', to: increment > 0 ? newBet : null }
@@ -517,13 +615,45 @@ export const useGameStore = create<GameState>((set, get) => {
     const { players, board, pot, dealerIndex } = get();
     const inHand = (status: PlayerStatus) => status === 'active' || status === 'all-in';
     const contenders = players.filter(p => inHand(p.status));
+    const payouts: PotPayout[] = [];
 
     const finish = (newPlayers: Player[], potLeft: number) => {
+      const live = get().liveHand;
+      if (live) {
+        try {
+          useHandHistoryStore.getState().archive({
+            version: 1,
+            id: handId(live.sessionId, live.handNumber),
+            sessionId: live.sessionId,
+            handNumber: live.handNumber,
+            startedAt: live.startedAt,
+            endedAt: new Date().toISOString(),
+            config: live.config,
+            dealerIndex: live.dealerIndex,
+            seats: live.seats.map((seat) => ({ ...seat, holeCards: [...seat.holeCards] })),
+            board: [...board],
+            actions: live.actions.map((action) => ({
+              ...action,
+              board: [...action.board],
+              npc: action.npc ? { ...action.npc, assumptions: [...action.npc.assumptions] } : null,
+            })),
+            payouts: payouts.map((payout) => ({ ...payout })),
+            results: newPlayers.map((player) => {
+              const before = live.seats.find((seat) => seat.id === player.id)?.chipsBefore ?? player.chips;
+              return { id: player.id, chips: player.chips, net: player.chips - before };
+            }),
+            endKind: contenders.length <= 1 ? 'folds' : 'showdown',
+          });
+        } catch {
+          // 回顾写入失败时牌局仍然结束。
+        }
+      }
       get().logAction(`本手结束筹码: ${newPlayers.map(p => `${p.name} $${p.chips}`).join(' / ')}`);
       commit({
         players: newPlayers,
         pot: potLeft,
         stage: 'showdown',
+        liveHand: null,
         dealerIndex: (dealerIndex + 1) % players.length
       });
     };
@@ -534,6 +664,7 @@ export const useGameStore = create<GameState>((set, get) => {
       if (contenders.length === 1) {
         const wIdx = newPlayers.findIndex(p => p.id === contenders[0].id);
         newPlayers[wIdx].chips += pot;
+        payouts.push({ label: '弃牌赢池', playerId: contenders[0].id, amount: pot, kind: 'win' });
         get().logAction(`${contenders[0].name} 收下底池 $${pot}`);
       }
       finish(newPlayers, contenders.length === 1 ? 0 : pot);
@@ -553,6 +684,7 @@ export const useGameStore = create<GameState>((set, get) => {
       if (contributors.length === 1) {
         const idx = newPlayers.findIndex(p => p.id === contributors[0].id);
         newPlayers[idx].chips += potLeft;
+        payouts.push({ label: '底池', playerId: newPlayers[idx].id, amount: potLeft, kind: 'win' });
         get().logAction(`${newPlayers[idx].name} 收下底池 $${potLeft}`);
         potLeft = 0;
       }
@@ -569,6 +701,7 @@ export const useGameStore = create<GameState>((set, get) => {
       newPlayers[idx].chips += refund;
       newPlayers[idx].invested = second;
       potLeft -= refund;
+      payouts.push({ label: '未匹配退还', playerId: newPlayers[idx].id, amount: refund, kind: 'refund' });
       get().logAction(`${newPlayers[idx].name} 收回未跟注 $${refund}`);
     }
 
@@ -621,6 +754,7 @@ export const useGameStore = create<GameState>((set, get) => {
         if (got <= 0) return;
         newPlayers[idx].chips += got;
         potLeft -= got;
+        payouts.push({ label: tier || '底池', playerId: newPlayers[idx].id, amount: got, kind: 'win' });
         const handName = handNameCN([...newPlayers[idx].cards, ...board]);
         get().logAction(`${newPlayers[idx].name} 获胜！以 [${handName}] 赢下 $${got}${tier}`);
       });
@@ -675,18 +809,20 @@ export const useGameStore = create<GameState>((set, get) => {
         return liveSource ? liveTurnFrom(liveSource) : emptyLive();
       },
       actions: {
-        fold: () => get().playerFold(),
-        check: () => get().playerCheck(),
-        call: () => get().playerCall(),
-        raise: (raiseTo) => get().playerRaise(raiseTo),
+        fold: (ctx) => get().playerFold(ctx),
+        check: (ctx) => get().playerCheck(ctx),
+        call: (ctx) => get().playerCall(ctx),
+        raise: (raiseTo, ctx) => get().playerRaise(raiseTo, ctx),
       },
-      profile: profileFor(actor.id),
+      profile: profileFor(actor.profileId ?? actor.id),
       options: {
         samples: runtimeLimits.samples,
         timeBudgetMs: runtimeLimits.timeBudgetMs,
         batchSize: runtimeLimits.batchSize,
         overallTimeoutMs: runtimeLimits.overallTimeoutMs,
-        yieldBetweenBatches: true,
+        yieldBetweenBatches: npcYieldBetweenBatches(),
+        rng: npcDecisionRng(),
+        sampleRng: npcDecisionRng(),
       },
     }).then(() => undefined);
   },

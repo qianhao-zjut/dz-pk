@@ -87,6 +87,10 @@ export interface AIDiagnosis {
   assumptions: string[];
   handKey: string | null;
   position: string | null;
+  priceTier?: string | null;
+  stackDepth?: string | null;
+  fallback?: boolean;
+  rngDraw?: number | null;
 }
 
 export type ObservationError =

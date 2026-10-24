@@ -2,8 +2,12 @@ import { handKey } from './cards';
 import { estimateEquity, type EquityOk, type EquityResult } from './equity';
 import { isLegalMove } from './prices';
 import { HEURISTIC_ASSUMPTION, PREFLOP_ASSUMPTION, SHOWDOWN_ASSUMPTION, type AIProfile } from './profiles';
-import { decidePreflop, rangeSpot } from './preflop';
+import { inPosition } from './position';
+import { decidePreflop, rangeSpot, stackDepth } from './preflop';
+import { preflopPrice } from './preflopPrice';
 import type { AIAction, AIDecision, AIDiagnosis, AIObservation } from './types';
+
+export { inPosition };
 
 const RANKS = '23456789TJQKA';
 
@@ -41,17 +45,6 @@ export function boardWet(board: readonly string[]): boolean {
     if (close >= 3) return true;
   }
   return false;
-}
-
-/** 从按钮下一位起绕桌，最后一个仍可行动的玩家才有位置。 */
-export function inPosition(obs: AIObservation): boolean {
-  const count = obs.players.length;
-  if (count === 0) return false;
-  const active = obs.players.filter((player) => player.status === 'active');
-  if (!active.some((player) => player.seat === obs.actorSeat)) return false;
-  const order = (seat: number) => ((seat - obs.dealerIndex - 1) % count + count) % count;
-  const last = Math.max(...active.map((player) => order(player.seat)));
-  return order(obs.actorSeat) === last;
 }
 
 function stackToPot(obs: AIObservation): number {
@@ -146,6 +139,11 @@ function ensureLegal(obs: AIObservation, move: AIAction): AIAction {
 
 export function decide(obs: AIObservation, profile: AIProfile, options: DecideOptions = {}): Decided {
   const rng = options.rng ?? Math.random;
+  let rngDraw: number | null = null;
+  const tracked = () => {
+    rngDraw = rng();
+    return rngDraw;
+  };
   const started = performance.now();
   const assumptions = [HEURISTIC_ASSUMPTION];
   let equity: number | null = null;
@@ -158,7 +156,7 @@ export function decide(obs: AIObservation, profile: AIProfile, options: DecideOp
   let position: string | null = rangeSpot(obs.actorSeat, obs.dealerIndex, obs.players);
 
   if (obs.stage === 'preflop') {
-    const choice = decidePreflop(obs, profile, rng);
+    const choice = decidePreflop(obs, profile, tracked);
     move = choice.move;
     reason = choice.reason;
     hand = choice.handKey;
@@ -180,7 +178,7 @@ export function decide(obs: AIObservation, profile: AIProfile, options: DecideOp
       evReference = estimated.evReference;
       samples = estimated.samples;
       equityElapsed = estimated.elapsedMs;
-      const choice = decidePostflop(obs, profile, estimated, rng);
+      const choice = decidePostflop(obs, profile, estimated, tracked);
       move = choice.move;
       reason = choice.reason;
       assumptions.push(estimated.assumption, SHOWDOWN_ASSUMPTION);
@@ -199,6 +197,10 @@ export function decide(obs: AIObservation, profile: AIProfile, options: DecideOp
     assumptions,
     handKey: hand,
     position,
+    priceTier: obs.stage === 'preflop' ? preflopPrice(obs).tier : null,
+    stackDepth: stackDepth(obs),
+    fallback: reason === 'equity-fallback',
+    rngDraw,
   };
   return {
     decision: { turnToken: obs.turnToken, actorId: obs.actorId, move },

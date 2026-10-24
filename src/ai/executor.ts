@@ -1,3 +1,4 @@
+import type { NpcActionContext } from './npcContext';
 import { makeTurnToken } from './observation';
 import { derivePrices, isLegalMove } from './prices';
 import { isBettingStage, type AIAction, type AIDecision, type LegalActions, type ObservationSource, type SeatStatus } from './types';
@@ -17,10 +18,10 @@ export interface LiveTurn {
 }
 
 export interface NpcTableActions {
-  fold: () => void;
-  check: () => void;
-  call: () => void;
-  raise: (raiseTo: number) => void;
+  fold: (ctx?: NpcActionContext) => void;
+  check: (ctx?: NpcActionContext) => void;
+  call: (ctx?: NpcActionContext) => void;
+  raise: (raiseTo: number, ctx?: NpcActionContext) => void;
 }
 
 export type ExecuteResult =
@@ -74,11 +75,22 @@ export function liveTurnFrom(source: ObservationSource): LiveTurn {
   };
 }
 
-function apply(move: AIAction, actions: NpcTableActions): void {
-  if (move.action === 'fold') actions.fold();
-  else if (move.action === 'check') actions.check();
-  else if (move.action === 'call') actions.call();
-  else actions.raise(move.raiseTo);
+function apply(move: AIAction, actions: NpcTableActions, ctx?: NpcActionContext): void {
+  if (move.action === 'fold') actions.fold(ctx);
+  else if (move.action === 'check') actions.check(ctx);
+  else if (move.action === 'call') actions.call(ctx);
+  else actions.raise(move.raiseTo, ctx);
+}
+
+function asFallback(ctx: NpcActionContext | undefined, move: AIAction): NpcActionContext | undefined {
+  if (!ctx) return undefined;
+  return {
+    ...ctx,
+    fallback: true,
+    reasonCode: move.action === 'check' ? 'fallback-check' : 'fallback-fold',
+    equity: null,
+    evReference: null,
+  };
 }
 
 /** 先核对轮次和金额，再调用牌桌动作。过期结果不会改用兜底动作打到新的一轮。 */
@@ -86,6 +98,7 @@ export function executeDecision(
   decision: AIDecision,
   readLive: () => LiveTurn,
   actions: NpcTableActions,
+  context?: NpcActionContext,
 ): ExecuteResult {
   const live = readLive();
   if (!live.tableExists) return { ok: false, reason: 'no-table' };
@@ -95,9 +108,9 @@ export function executeDecision(
   if (!isLegalMove(live, decision.move)) {
     const move: AIAction = live.legal.canCheck ? { action: 'check' } : { action: 'fold' };
     if (!isLegalMove(live, move)) return { ok: false, reason: 'stale' };
-    apply(move, actions);
+    apply(move, actions, asFallback(context, move));
     return { ok: false, reason: 'illegal-fallback', applied: move };
   }
-  apply(decision.move, actions);
+  apply(decision.move, actions, context);
   return { ok: true, applied: decision.move };
 }

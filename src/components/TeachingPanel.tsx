@@ -1,10 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { Card } from '../utils/poker';
-import { evaluateHand, handNameCN } from '../utils/poker';
+import { handNameCN } from '../utils/poker';
+import { analyzeDraws } from '../game/draws';
+import { describeHole } from '../game/holeText';
+import { roleLabel, type SeatRole } from '../game/positions';
 
 interface TeachingPanelProps {
   humanCards: Card[];
   boardCards: Card[];
+  role: SeatRole | null;
+  raiseCount: number;
 }
 
 const HAND_RANKINGS = [
@@ -20,56 +25,60 @@ const HAND_RANKINGS = [
   { name: '高牌 (High Card)', desc: '不符合以上任何牌型，比单张大小' },
 ];
 
-export const TeachingPanel: React.FC<TeachingPanelProps> = ({ humanCards, boardCards }) => {
+export const TeachingPanel: React.FC<TeachingPanelProps> = ({ humanCards, boardCards, role, raiseCount }) => {
+  const [openRankings, setOpenRankings] = useState(false);
+  const [openHelp, setOpenHelp] = useState(false);
   let currentHandStr = '等待发牌...';
-  let isStrongHand = false;
+  let extra = '';
 
-  if (humanCards.length > 0) {
-    if (boardCards.length === 0) {
-      currentHandStr = '翻前底牌 (Hole Cards)';
-    } else {
-      const evaluation = evaluateHand([...humanCards, ...boardCards]);
-      const engName = evaluation.name;
-      // 与日志共用同一套中文牌型映射
-      currentHandStr = `当前最大成牌：${handNameCN([...humanCards, ...boardCards])}`;
-      
-      // 高牌和一对不算特别强，两对及以上给个高亮
-      if (engName !== 'High Card' && engName !== 'Pair') {
-        isStrongHand = true;
-      }
-    }
+  if (humanCards.length === 2 && boardCards.length === 0) {
+    const hole = describeHole(humanCards[0], humanCards[1]);
+    const where = role ? `${roleLabel(role)} ${role}` : '位置未知';
+    const context = raiseCount === 0 ? '还没有人开池' : raiseCount === 1 ? '面对一次开池或加注' : '面对再加注';
+    currentHandStr = `${hole} · ${where}`;
+    extra = context;
+  } else if (humanCards.length > 0 && boardCards.length > 0) {
+    currentHandStr = `当前最大成牌：${handNameCN([...humanCards, ...boardCards])}`;
+    const draws = analyzeDraws(humanCards, boardCards);
+    const drawText = draws.labels.length > 0 ? `${draws.labels.join('、')}。${draws.note}` : draws.note;
+    const backdoor = draws.backdoor.length > 0 ? draws.backdoor.join(' ') : '';
+    extra = [drawText, backdoor].filter(Boolean).join(' ');
   }
 
   return (
     <div className="flex flex-col gap-4 h-full">
-      {/* 实时牌力提示 */}
-      <div className={`p-4 rounded-xl shadow-lg border-2 transition-all ${
-        isStrongHand 
-          ? 'bg-yellow-900/40 border-yellow-500 text-yellow-300' 
-          : 'bg-gray-800 border-blue-500/50 text-blue-300'
-      }`}>
-        <div className="flex items-center space-x-2 mb-1">
-          <span className="text-xl">🎯</span>
-          <span className="font-bold text-sm text-gray-300">实时牌力提示</span>
-        </div>
-        <div className="text-lg font-bold">
-          {currentHandStr}
-        </div>
+      <div className="p-4 rounded-xl shadow-lg border-2 bg-gray-800 border-blue-500/50 text-blue-300">
+        <div className="font-bold text-sm text-gray-300 mb-1">实时牌力提示</div>
+        <div className="text-lg font-bold text-white">{currentHandStr}</div>
+        {extra && <p className="text-sm text-gray-300 mt-2">{extra}</p>}
+        {role && humanCards.length === 2 && boardCards.length === 0 && (
+          <p className="text-xs text-gray-500 mt-2">范围提示只说明牌类和位置，不代表这手一定该跟或该弃。</p>
+        )}
       </div>
 
-      {/* 牌型图鉴 */}
-      <div className="flex-1 bg-gray-800 rounded-xl border border-gray-700 overflow-hidden flex flex-col shadow-lg">
-        <div className="bg-gray-900 p-3 border-b border-gray-700 font-bold text-gray-300 flex items-center">
-          <span>📚 牌型大小图鉴 (大到小)</span>
-        </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {HAND_RANKINGS.map((rank, idx) => (
-            <div key={idx} className="p-2 hover:bg-gray-700 rounded transition-colors text-sm">
-              <div className="font-bold text-gray-200">{rank.name}</div>
-              <div className="text-xs text-gray-500">{rank.desc}</div>
-            </div>
-          ))}
-        </div>
+      <div className="bg-gray-800 rounded-xl border border-gray-700 shadow-lg">
+        <button onClick={() => setOpenHelp((value) => !value)} className="w-full text-left p-3 font-bold text-gray-300">
+          {openHelp ? '收起记法' : '牌面记法'}
+        </button>
+        {openHelp && (
+          <p className="px-3 pb-3 text-xs text-gray-400">点数 2-9、T、J、Q、K、A。花色 s=黑桃、h=红桃、d=方块、c=梅花。例如 Ah 是红桃 A。</p>
+        )}
+      </div>
+
+      <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden flex flex-col shadow-lg">
+        <button onClick={() => setOpenRankings((value) => !value)} className="bg-gray-900 p-3 border-b border-gray-700 font-bold text-gray-300 text-left">
+          {openRankings ? '收起牌型图鉴' : '牌型图鉴（默认折叠）'}
+        </button>
+        {openRankings && (
+          <div className="p-2 space-y-1 max-h-64 overflow-y-auto">
+            {HAND_RANKINGS.map((rank) => (
+              <div key={rank.name} className="p-2 text-sm">
+                <div className="font-bold text-gray-200">{rank.name}</div>
+                <div className="text-xs text-gray-500">{rank.desc}</div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

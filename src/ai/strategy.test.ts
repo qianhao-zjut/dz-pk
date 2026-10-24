@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { UNIFORM_RANGE_ASSUMPTION, type EquityOk } from './equity';
 import { buildObservation } from './observation';
+import { AGGRO_BB_MIX, SOLID_BB_MIX } from './defendLines';
 import { PROFILES } from './profiles';
 import { isLegalMove } from './prices';
 import { decide, inPosition } from './strategy';
@@ -476,5 +477,89 @@ describe('翻后行动位置', () => {
       dealerIndex: 0,
       actorSeat: 0,
     } as unknown as ReturnType<typeof spot>)).toBe(false);
+  });
+});
+
+describe('再加注混合与尺度', () => {
+  function bbPocket(cards: string[], extra: Partial<SourcePlayer> = {}) {
+    return must({
+      currentPlayerIndex: 2,
+      currentMaxBet: 25,
+      lastRaiseSize: 15,
+      pot: 40,
+      players: four(2, cards, { currentBet: 10, invested: 10, chips: 990, ...extra }),
+      streetActions: [{ actorId: 'human', stage: 'preflop', kind: 'raise', to: 25 }],
+    });
+  }
+
+  it('中间对子按配置频率在跟注和再加注之间切换，边界两侧动作不同', () => {
+    const spot = bbPocket(['2h', '2d']);
+    expect(decide(spot, PROFILES.ai_0, { rng: () => 0 }).decision.move.action).toBe('raise');
+    expect(decide(spot, PROFILES.ai_0, { rng: () => SOLID_BB_MIX - 0.001 }).decision.move.action).toBe('raise');
+    expect(decide(spot, PROFILES.ai_0, { rng: () => SOLID_BB_MIX }).decision.move.action).toBe('call');
+    expect(decide(spot, PROFILES.ai_0, { rng: () => 0.99 }).decision.move.action).toBe('call');
+    expect(decide(spot, PROFILES.ai_1, { rng: () => AGGRO_BB_MIX - 0.001 }).decision.move.action).toBe('raise');
+    expect(decide(spot, PROFILES.ai_1, { rng: () => AGGRO_BB_MIX }).decision.move.action).toBe('call');
+    expect(AGGRO_BB_MIX).toBeGreaterThan(SOLID_BB_MIX);
+  });
+
+  it('混合不能绕过全下许可和大额价格', () => {
+    const jammed = bbPocket(['2h', '2d'], { chips: 20 });
+    expect(decide(jammed, PROFILES.ai_0, { rng: () => 0 }).decision.move.action).toBe('fold');
+    const aces = bbPocket(['As', 'Ad'], { chips: 20 });
+    expect(decide(aces, PROFILES.ai_0, { rng: () => 0 }).decision.move).toEqual({ action: 'raise', raiseTo: 30 });
+
+    const large = must({
+      currentPlayerIndex: 2,
+      currentMaxBet: 80,
+      lastRaiseSize: 70,
+      pot: 95,
+      players: four(2, ['2h', '2d'], { currentBet: 10, invested: 10, chips: 990 }),
+      streetActions: [{ actorId: 'human', stage: 'preflop', kind: 'raise', to: 80 }],
+    });
+    expect(decide(large, PROFILES.ai_0, { rng: () => 0 }).decision.move.action).toBe('fold');
+  });
+
+  it('无位置再加注大于有位置，冷跟加大尺寸，相同条件金额不变', () => {
+    const ip = must({
+      currentPlayerIndex: 0,
+      currentMaxBet: 30,
+      lastRaiseSize: 20,
+      pot: 45,
+      players: four(0, ['As', 'Ad']),
+      streetActions: [{ actorId: 'ai_2', stage: 'preflop', kind: 'raise', to: 30 }],
+    });
+    const oop = bbPocket(['As', 'Ad'], { chips: 990 });
+    const crowdedPlayers = four(2, ['As', 'Ad'], { currentBet: 10, invested: 10, chips: 990 });
+    crowdedPlayers[1] = { ...crowdedPlayers[1], currentBet: 25, invested: 25, status: 'active' };
+    const crowded = must({
+      currentPlayerIndex: 2,
+      currentMaxBet: 25,
+      lastRaiseSize: 15,
+      pot: 65,
+      players: crowdedPlayers,
+      streetActions: [{ actorId: 'human', stage: 'preflop', kind: 'raise', to: 25 }],
+    });
+    const ipMove = decide(ip, PROFILES.ai_0, { rng: () => 0.2 }).decision.move;
+    const oopMove = decide(oop, PROFILES.ai_0, { rng: () => 0.8 }).decision.move;
+    const again = decide(oop, PROFILES.ai_0, { rng: () => 0.1 }).decision.move;
+    const crowdedMove = decide(crowded, PROFILES.ai_0).decision.move;
+    const aggroOop = decide(oop, PROFILES.ai_1).decision.move;
+    expect(ipMove).toEqual({ action: 'raise', raiseTo: 90 });
+    expect(oopMove).toEqual({ action: 'raise', raiseTo: 88 });
+    expect(again).toEqual(oopMove);
+    expect(crowdedMove).toEqual({ action: 'raise', raiseTo: 113 });
+    expect(aggroOop).toEqual({ action: 'raise', raiseTo: 100 });
+  });
+
+  it('前面有人平跟时开池尺寸变大，没人平跟时保持原开池额', () => {
+    const limped = four(0, ['As', 'Ad']);
+    limped[3] = { ...limped[3], currentBet: 10, invested: 10 };
+    const isolated = must({
+      currentPlayerIndex: 0,
+      currentMaxBet: 10,
+      players: limped,
+    });
+    expect(decide(isolated, PROFILES.ai_0).decision.move).toEqual({ action: 'raise', raiseTo: 35 });
   });
 });

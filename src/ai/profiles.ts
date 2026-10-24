@@ -1,10 +1,11 @@
+import { DEFEND, type DefendLine, type Spot } from './defendLines';
 import type { ProfileId } from './types';
 
 /**
  * 四人桌范围和阈值都是启发式，不是已验证的最优解。
  * 四人桌 UTG 比九人桌 UTG 宽，不能把几何位置直接套进九人桌图表。
  */
-export type RangeSpot = 'UTG' | 'BTN' | 'SB' | 'BB' | 'HU';
+export type RangeSpot = Spot;
 
 export interface RangeChart {
   open: Record<RangeSpot, string[]>;
@@ -20,10 +21,12 @@ export interface RangeChart {
 export interface AIProfile {
   id: ProfileId;
   label: string;
-  /** 开池加到几个大盲 */
+  /** 开池加到几个大盲。前面有平跟时再按人数加大，不随机改金额。 */
   openMultiple: number;
-  /** 面对加注时，加到当前最高注的几倍 */
-  threeBetMultiple: number;
+  /** 有位置时，再加注到当前最高注的几倍，每个冷跟再加 1 倍。 */
+  reraiseInPosition: number;
+  /** 无位置时更大。同一位置、尺度和冷跟人数得到同一金额。 */
+  reraiseOutOfPosition: number;
   /** 占跟注额的比例。负数表示愿意跟一点负期望。 */
   callCushionFraction: number;
   valueEquity: number;
@@ -39,9 +42,38 @@ export interface AIProfile {
   /** 高风险档的继续范围，比大额档更紧。 */
   highRiskContinue: string[];
   charts: RangeChart;
+  /** 短筹开池，不直接套用深筹范围。 */
+  shortOpen: Record<RangeSpot, string[]>;
+  /** 深筹在标准开池上额外加入的牌。 */
+  deepExtraOpen: Record<RangeSpot, string[]>;
+  /** 按自己的位置，再按开池者位置。缺省时回退到 charts 里的统一防守。 */
+  defend: Partial<Record<RangeSpot, Partial<Record<RangeSpot, DefendLine>>>>;
 }
 
 const none: Record<RangeSpot, string[]> = { UTG: [], BTN: [], SB: [], BB: [], HU: [] };
+
+/** 2026-10-24 调整前的开池范围。短筹继续用它，避免把 40bb 直接套成 200bb。 */
+const solidShortOpen: RangeChart['open'] = spots(
+  ['77+', 'ATs+', 'AJo+', 'KQs', 'KQo', 'QJs', 'JTs'],
+  ['22+', 'A2s+', 'A9o+', 'K9s+', 'KTo+', 'Q9s+', 'QTo+', 'J9s+', 'JTo', 'T9s', '98s', '87s', '76s', '65s'],
+  ['55+', 'A8s+', 'ATo+', 'KTs+', 'KJo+', 'QTs+', 'QJo', 'JTs', 'T9s'],
+  ['55+', 'A8s+', 'ATo+', 'KTs+', 'KJo+', 'QTs+', 'QJo', 'JTs', 'T9s'],
+  ['22+', 'A2s+', 'A8o+', 'K9s+', 'KTo+', 'Q9s+', 'J9s+', 'T9s', '98s', '87s', '76s'],
+);
+const aggroShortOpen: RangeChart['open'] = spots(
+  ['55+', 'A9s+', 'ATo+', 'KTs+', 'KJo+', 'QTs+', 'QJo', 'JTs', 'T9s', '98s'],
+  ['22+', 'A2s+', 'A2o+', 'K8s+', 'K9o+', 'Q8s+', 'Q9o+', 'J8s+', 'J9o+', 'T8s+', '97s+', '86s+', '75s+', '64s+', '54s'],
+  ['22+', 'A2s+', 'A8o+', 'K8s+', 'KTo+', 'Q9s+', 'QTo+', 'J9s+', 'T9s', '98s', '87s', '76s'],
+  ['22+', 'A2s+', 'A5o+', 'K7s+', 'KTo+', 'Q9s+', 'J9s+', 'T8s+', '97s+', '86s+', '75s+'],
+  ['22+', 'A2s+', 'A2o+', 'K5s+', 'K9o+', 'Q8s+', 'J8s+', 'T8s+', '97s+', '86s+', '76s'],
+);
+const tightShortOpen: RangeChart['open'] = spots(
+  ['TT+', 'AQs+', 'AKo'],
+  ['77+', 'ATs+', 'AJo+', 'KQs', 'KQo', 'QJs'],
+  ['99+', 'AQs+', 'AKo', 'KQs'],
+  ['99+', 'AQs+', 'AKo', 'KQs'],
+  ['77+', 'ATs+', 'AJo+', 'KQs', 'KQo'],
+);
 
 function spots(utg: string[], btn: string[], sb: string[], bb: string[], hu: string[]): Record<RangeSpot, string[]> {
   return { UTG: utg, BTN: btn, SB: sb, BB: bb, HU: hu };
@@ -50,7 +82,7 @@ function spots(utg: string[], btn: string[], sb: string[], bb: string[], hu: str
 const solidChart: RangeChart = {
   open: spots(
     ['77+', 'ATs+', 'AJo+', 'KQs', 'KQo', 'QJs', 'JTs'],
-    ['22+', 'A2s+', 'A9o+', 'K9s+', 'KTo+', 'Q9s+', 'QTo+', 'J9s+', 'JTo', 'T9s', '98s', '87s', '76s', '65s'],
+    ['22+', 'A2s+', 'A4o+', 'K7s+', 'K9o+', 'Q8s+', 'Q9o+', 'J8s+', 'J9o+', 'T8s+', 'T9o', '97s+', '98o', '86s+', '87o', '75s+', '76o', '65s', '64s', '54s'],
     ['55+', 'A8s+', 'ATo+', 'KTs+', 'KJo+', 'QTs+', 'QJo', 'JTs', 'T9s'],
     ['55+', 'A8s+', 'ATo+', 'KTs+', 'KJo+', 'QTs+', 'QJo', 'JTs', 'T9s'],
     ['22+', 'A2s+', 'A8o+', 'K9s+', 'KTo+', 'Q9s+', 'J9s+', 'T9s', '98s', '87s', '76s'],
@@ -90,7 +122,7 @@ const solidChart: RangeChart = {
 const aggroChart: RangeChart = {
   open: spots(
     ['55+', 'A9s+', 'ATo+', 'KTs+', 'KJo+', 'QTs+', 'QJo', 'JTs', 'T9s', '98s'],
-    ['22+', 'A2s+', 'A2o+', 'K8s+', 'K9o+', 'Q8s+', 'Q9o+', 'J8s+', 'J9o+', 'T8s+', '97s+', '86s+', '75s+', '64s+', '54s'],
+    ['22+', 'A2s+', 'A2o+', 'K2s+', 'K5o+', 'Q5s+', 'Q8o+', 'J7s+', 'J8o+', 'T7s+', 'T8o+', '96s+', '98o', '85s+', '87o', '74s+', '76o', '64s+', '65o', '53s+', '54o', '43s'],
     ['22+', 'A2s+', 'A8o+', 'K8s+', 'KTo+', 'Q9s+', 'QTo+', 'J9s+', 'T9s', '98s', '87s', '76s'],
     ['22+', 'A2s+', 'A5o+', 'K7s+', 'KTo+', 'Q9s+', 'J9s+', 'T8s+', '97s+', '86s+', '75s+'],
     ['22+', 'A2s+', 'A2o+', 'K5s+', 'K9o+', 'Q8s+', 'J8s+', 'T8s+', '97s+', '86s+', '76s'],
@@ -130,7 +162,7 @@ const aggroChart: RangeChart = {
 const tightChart: RangeChart = {
   open: spots(
     ['TT+', 'AQs+', 'AKo'],
-    ['77+', 'ATs+', 'AJo+', 'KQs', 'KQo', 'QJs'],
+    ['44+', 'A4s+', 'A9o+', 'K9s+', 'KTo+', 'Q9s+', 'QTo+', 'J9s+', 'JTo', 'T9s', '98s', '87s', '76s'],
     ['99+', 'AQs+', 'AKo', 'KQs'],
     ['99+', 'AQs+', 'AKo', 'KQs'],
     ['77+', 'ATs+', 'AJo+', 'KQs', 'KQo'],
@@ -154,7 +186,8 @@ export const PROFILES: Record<ProfileId, AIProfile> = {
     id: 'ai_0',
     label: '稳健',
     openMultiple: 2.5,
-    threeBetMultiple: 3,
+    reraiseInPosition: 3,
+    reraiseOutOfPosition: 3.5,
     callCushionFraction: 0,
     valueEquity: 0.62,
     strongEquity: 0.78,
@@ -167,12 +200,16 @@ export const PROFILES: Record<ProfileId, AIProfile> = {
     largeContinue: ['TT+', 'AQs+', 'AKo'],
     highRiskContinue: ['QQ+', 'AKs', 'AKo'],
     charts: solidChart,
+    shortOpen: solidShortOpen,
+    deepExtraOpen: spots(['A9s', 'KJo'], ['A3o', 'A2o', 'K8o', 'Q8o', '43s'], [], [], []),
+    defend: DEFEND.ai_0,
   },
   ai_1: {
     id: 'ai_1',
     label: '激进',
     openMultiple: 3.5,
-    threeBetMultiple: 3.4,
+    reraiseInPosition: 3,
+    reraiseOutOfPosition: 4,
     callCushionFraction: -0.05,
     valueEquity: 0.54,
     strongEquity: 0.7,
@@ -185,12 +222,16 @@ export const PROFILES: Record<ProfileId, AIProfile> = {
     largeContinue: ['99+', 'AJs+', 'AQo+', 'KQs'],
     highRiskContinue: ['JJ+', 'AQs+', 'AKo'],
     charts: aggroChart,
+    shortOpen: aggroShortOpen,
+    deepExtraOpen: spots([], ['K4o', 'K3o', 'K2o', 'Q7o', '32s'], [], [], []),
+    defend: DEFEND.ai_1,
   },
   ai_2: {
     id: 'ai_2',
     label: '保守',
     openMultiple: 2.5,
-    threeBetMultiple: 2.7,
+    reraiseInPosition: 3,
+    reraiseOutOfPosition: 3.5,
     callCushionFraction: 0.12,
     valueEquity: 0.72,
     strongEquity: 0.85,
@@ -203,8 +244,13 @@ export const PROFILES: Record<ProfileId, AIProfile> = {
     largeContinue: ['JJ+', 'AQs+', 'AKo'],
     highRiskContinue: ['KK+', 'AKs'],
     charts: tightChart,
+    shortOpen: tightShortOpen,
+    deepExtraOpen: spots([], ['33', '22', 'A8s', 'A7s', 'A8o', 'K9o', '65s'], [], [], []),
+    defend: DEFEND.ai_2,
   },
 };
+
+export const RANGE_CONFIG_VERSION = '2026-10-24.1';
 
 export function profileFor(id: string): AIProfile {
   if (id === 'ai_0' || id === 'ai_1' || id === 'ai_2') return PROFILES[id];

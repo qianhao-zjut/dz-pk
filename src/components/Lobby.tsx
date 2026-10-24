@@ -1,14 +1,11 @@
 import React, { useState } from 'react';
 import { useBankrollStore } from '../store/bankrollStore';
+import { useHandHistoryStore } from '../store/handHistoryStore';
+import { bankrollAdvice, LEVELS, SCENARIOS, tableFromSelection, type BuyInDepth, type OpponentMix, type ScenarioId, type TableConfig } from '../game/sessionConfig';
+import { HandReview } from './HandReview';
 import { Coins, AlertTriangle, Play, RotateCcw, Settings } from 'lucide-react';
 
-export interface TableConfig {
-  id: string;
-  name: string;
-  smallBlind: number;
-  bigBlind: number;
-  buyIn: number;
-}
+export type { TableConfig };
 
 export const TABLES: TableConfig[] = [
   { id: 't1', name: '新手桌 ($1/$2)', smallBlind: 1, bigBlind: 2, buyIn: 200 },
@@ -22,6 +19,13 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
   const [showSetBankrollModal, setShowSetBankrollModal] = useState(false);
   const [bankrollInput, setBankrollInput] = useState(balance.toString());
   const [bankrollError, setBankrollError] = useState('');
+  const [scenarioId, setScenarioId] = useState<ScenarioId>('standard');
+  const [depth, setDepth] = useState<BuyInDepth>(100);
+  const [opponents, setOpponents] = useState<OpponentMix>('mixed');
+  const [reviewId, setReviewId] = useState<string | null>(null);
+  const hands = useHandHistoryStore((state) => state.hands);
+  const autoOpenReview = useHandHistoryStore((state) => state.autoOpenReview);
+  const setAutoOpenReview = useHandHistoryStore((state) => state.setAutoOpenReview);
 
   const handleSetBankrollClick = () => {
     setBankrollInput(balance.toString());
@@ -39,27 +43,16 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
     }
   };
 
-  const handleJoinClick = (table: TableConfig) => {
-    // 30 Buy-in rule: you should have at least 30x the buy-in to play safely
-    const requiredBankroll = table.buyIn * 30;
-    
-    if (balance < table.buyIn) {
-      setWarning({
-        show: true,
-        message: `您的资金不足以支付该桌的买入 ($${table.buyIn})。`,
-      });
+  const handleJoinClick = (levelId: string) => {
+    const level = LEVELS.find((item) => item.id === levelId);
+    if (!level) return;
+    const table = tableFromSelection(level, scenarioId, depth, opponents);
+    const advice = bankrollAdvice(balance, table.buyIn);
+    if (!advice.canSit || advice.advice) {
+      setWarning({ show: true, message: advice.advice ?? '现在不能入座。', table: advice.canSit ? table : undefined });
       return;
     }
-
-    if (balance < requiredBankroll) {
-      setWarning({
-        show: true,
-        message: `【越级警告】标准的资金管理(30买入原则)建议您至少拥有 $${requiredBankroll} 才能挑战此级别。您当前资金承受破产的风险极高！是否执意进入？`,
-        table,
-      });
-    } else {
-      onJoinTable(table);
-    }
+    onJoinTable(table);
   };
 
   const confirmJoin = () => {
@@ -104,34 +97,81 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
           </div>
         </div>
 
-        {/* Tables */}
+        <div className="bg-gray-800 rounded-2xl p-4 mb-6 border border-gray-700 space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {SCENARIOS.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => { setScenarioId(item.id); setDepth(item.buyInBb); }}
+                className={`px-3 py-2 rounded-lg text-sm ${scenarioId === item.id ? 'bg-blue-600' : 'bg-gray-700'}`}
+              >
+                {item.name} · {item.buyInBb}bb
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2 text-sm">
+            {([40, 100, 200] as BuyInDepth[]).map((item) => (
+              <button key={item} onClick={() => setDepth(item)} className={`px-3 py-1 rounded-lg ${depth === item ? 'bg-yellow-600' : 'bg-gray-700'}`}>
+                买入 {item}bb
+              </button>
+            ))}
+            {(['mixed', 'loose', 'tight'] as OpponentMix[]).map((item) => (
+              <button key={item} onClick={() => setOpponents(item)} className={`px-3 py-1 rounded-lg ${opponents === item ? 'bg-green-700' : 'bg-gray-700'}`}>
+                {item === 'mixed' ? '混合对手' : item === 'loose' ? '偏松对手' : '偏紧对手'}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-gray-400">深度是开局推荐值，打过几手后有效筹码会变化。改变这里的选项不会扣钱。</p>
+          <label className="flex items-center gap-2 text-sm text-gray-300">
+            <input type="checkbox" checked={autoOpenReview} onChange={(event) => setAutoOpenReview(event.target.checked)} />
+            每手结束自动展开回顾
+          </label>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {TABLES.map((table) => (
-            <div key={table.id} className="bg-gray-800 rounded-2xl p-6 border border-gray-700 hover:border-blue-500 transition-all shadow-lg flex flex-col">
-              <h3 className="text-xl font-bold text-white mb-4">{table.name}</h3>
+          {LEVELS.map((level) => {
+            const table = tableFromSelection(level, scenarioId, depth, opponents);
+            const times = table.buyIn > 0 ? balance / table.buyIn : 0;
+            return (
+            <div key={level.id} className="bg-gray-800 rounded-2xl p-6 border border-gray-700 hover:border-blue-500 transition-all shadow-lg flex flex-col">
+              <h3 className="text-xl font-bold text-white mb-4">{level.name}</h3>
               <div className="space-y-2 mb-6 text-gray-300">
                 <div className="flex justify-between">
                   <span>盲注 (SB/BB):</span>
-                  <span className="font-mono">${table.smallBlind}/${table.bigBlind}</span>
+                  <span className="font-mono">${level.smallBlind}/${level.bigBlind}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>买入 (Buy-in):</span>
-                  <span className="font-mono">${table.buyIn}</span>
+                  <span>本次买入:</span>
+                  <span className="font-mono">${table.buyIn} · {depth}bb</span>
                 </div>
                 <div className="flex justify-between text-sm text-gray-500 mt-4">
-                  <span>建议安全资金:</span>
-                  <span className="font-mono">${table.buyIn * 30}</span>
+                  <span>约可买入:</span>
+                  <span className="font-mono">{times.toFixed(1)} 次</span>
                 </div>
               </div>
               <button
-                onClick={() => handleJoinClick(table)}
+                onClick={() => handleJoinClick(level.id)}
                 className="mt-auto w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold flex justify-center items-center transition-colors"
               >
                 <Play size={18} className="mr-2" /> 入座 (Sit Down)
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
+
+        <div className="mt-6 bg-gray-800 rounded-2xl p-4 border border-gray-700">
+          <div className="font-bold mb-3">最近手牌</div>
+          {hands.length === 0 && <p className="text-sm text-gray-500">还没有已完成的手牌。</p>}
+          <div className="space-y-2">
+            {[...hands].reverse().map((hand) => (
+              <button key={hand.id} onClick={() => setReviewId(hand.id)} className="w-full text-left px-3 py-2 rounded-lg bg-gray-900 hover:bg-gray-700 text-sm">
+                第 {hand.handNumber} 手 · {hand.config.levelName} · {hand.config.buyInBb}bb · {hand.endKind === 'folds' ? '弃牌结束' : '摊牌'}
+              </button>
+            ))}
+          </div>
+        </div>
+        {reviewId && <HandReview handId={reviewId} onClose={() => setReviewId(null)} />}
 
         {/* Warning Modal */}
         {warning.show && (
@@ -139,7 +179,7 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
             <div className="bg-gray-800 rounded-2xl p-8 max-w-md w-full border border-red-900 shadow-2xl">
               <div className="flex items-center text-red-500 mb-4">
                 <AlertTriangle size={32} className="mr-3" />
-                <h2 className="text-2xl font-bold">资金管理警告</h2>
+                <h2 className="text-2xl font-bold">{warning.table ? '买入提示' : '资金不足'}</h2>
               </div>
               <p className="text-gray-300 leading-relaxed mb-8">{warning.message}</p>
               
@@ -148,14 +188,14 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
                   onClick={() => setWarning({ show: false, message: '' })}
                   className="flex-1 py-3 bg-gray-700 hover:bg-gray-600 rounded-xl font-bold transition-colors"
                 >
-                  听劝，退回
+                  {warning.table ? '先不进入' : '知道了'}
                 </button>
                 {warning.table && (
                   <button 
                     onClick={confirmJoin}
-                    className="flex-1 py-3 bg-red-600 hover:bg-red-500 rounded-xl font-bold transition-colors"
+                    className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-colors"
                   >
-                    执意进入
+                    仍然入座
                   </button>
                 )}
               </div>

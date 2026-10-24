@@ -1,15 +1,35 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { useBankrollStore } from '../store/bankrollStore';
+import { useHandHistoryStore } from '../store/handHistoryStore';
 import { AlertTriangle, Coins } from 'lucide-react';
 import { CardUI } from './CardUI';
 import { TeachingPanel } from './TeachingPanel';
+import { HandReview } from './HandReview';
+import { quoteCall } from '../game/priceQuote';
+import { actionShortcuts, raiseVerb, type StreetName } from '../game/shortcuts';
+import { seatRole, stackText } from '../game/positions';
+import { reviewAutoOpenDecision } from '../game/reviewGate';
 
 export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
   const {
     table, stage, pot, board, players, currentPlayerIndex, currentMaxBet, lastRaiseSize, dealerIndex,
+    handDealerIndex, streetActions, sessionId, handNumber,
     startHand, playerFold, playerCheck, playerCall, playerRaise, leaveTable, actAI, gameLog, rebuy
   } = useGameStore();
+  const hands = useHandHistoryStore((state) => state.hands);
+  const pendingAutoOpenId = useHandHistoryStore((state) => state.pendingAutoOpenId);
+  const consumeAutoOpen = useHandHistoryStore((state) => state.consumeAutoOpen);
+  const [manualReviewId, setManualReviewId] = useState<string | null>(null);
+  const pendingHand = hands.find((item) => item.id === pendingAutoOpenId) ?? null;
+  const autoDecision = reviewAutoOpenDecision({
+    pendingId: pendingAutoOpenId,
+    hand: pendingHand,
+    stage,
+    sessionId,
+    handNumber,
+  });
+  const reviewId = manualReviewId ?? (autoDecision === 'open' ? pendingAutoOpenId : null);
   
   const deductFunds = useBankrollStore(state => state.deductFunds);
   const addFunds = useBankrollStore(state => state.addFunds);
@@ -34,6 +54,10 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [gameLog]);
+
+  useEffect(() => {
+    if (autoDecision === 'drop' && pendingAutoOpenId) consumeAutoOpen(pendingAutoOpenId);
+  }, [autoDecision, pendingAutoOpenId, consumeAutoOpen]);
 
   // AI Turn trigger
   useEffect(() => {
@@ -60,19 +84,44 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
   const raiseMin = Math.min(minRaiseTarget, humanTotal); // 筹码不足最小加注时只能 All-in
   const raiseMax = humanTotal;
   const amountToCall = Math.max(0, currentMaxBet - (human?.currentBet || 0));
-  const potAfterCall = pot + amountToCall; // 跟注后的底池（池口尺寸口径）
-  const clampRaise = (v: number) => Math.min(Math.max(v, raiseMin), raiseMax);
-  const halfPotTarget = clampRaise(currentMaxBet + Math.round(potAfterCall / 2));
-  const fullPotTarget = clampRaise(currentMaxBet + potAfterCall);
-  const raisePresets = [
-    { label: 'Min', value: raiseMin },
-    { label: '½ 底池', value: halfPotTarget },
-    { label: '满池', value: fullPotTarget },
-    { label: 'All-in', value: raiseMax },
-  ];
+  const buttonIndex = handNumber > 0 ? handDealerIndex : dealerIndex;
+  const humanSeat = players.findIndex((player) => player.id === 'human');
+  const humanRole = humanSeat >= 0 ? seatRole(humanSeat, buttonIndex, players.length) : null;
+  const bettingStreet = (stage === 'preflop' || stage === 'flop' || stage === 'turn' || stage === 'river') ? stage : 'preflop';
+  const raiseCount = streetActions.filter((action) => action.stage === stage && action.kind === 'raise').length;
+  const limpers = players.filter((player, seat) => (
+    player.id !== 'human'
+    && player.currentBet >= table.bigBlind
+    && seatRole(seat, buttonIndex, players.length) !== 'BB'
+    && player.status !== 'folded'
+    && player.status !== 'sitting-out'
+  )).length;
+  const activeSeats = players.map((player, seat) => ({ seat, status: player.status })).filter((player) => player.status === 'active');
+  const order = (seat: number) => ((seat - buttonIndex - 1) % players.length + players.length) % players.length;
+  const heroInPosition = humanSeat >= 0 && activeSeats.length > 0 && order(humanSeat) === Math.max(...activeSeats.map((player) => order(player.seat)));
+  const plan = actionShortcuts({
+    street: bettingStreet as StreetName,
+    bigBlind: table.bigBlind,
+    pot,
+    currentMaxBet,
+    lastRaiseSize,
+    heroBet: human?.currentBet ?? 0,
+    heroChips: human?.chips ?? 0,
+    canRaise: Boolean(human?.canRaise),
+    raiseCount,
+    limpers,
+    inPosition: heroInPosition,
+  });
+  const verb = raiseVerb(bettingStreet, currentMaxBet);
+  const quote = human ? quoteCall(human, currentMaxBet, players, pot) : null
+  const opponentsLeft = players.filter((player) => player.id !== 'human' && player.status !== 'folded' && player.status !== 'sitting-out');
+  const effective = human && opponentsLeft.length > 0
+    ? Math.min(human.chips + human.currentBet, ...opponentsLeft.map((player) => player.chips + player.currentBet))
+    : null;
+  const latestHand = [...hands].reverse().find((hand) => hand.sessionId === sessionId) ?? null;
 
   const openRaisePanel = () => {
-    setRaiseSize(halfPotTarget); // 默认 ½ 底池
+    setRaiseSize(plan.defaultRaiseTo ?? raiseMin);
     setShowRaisePanel(true);
   };
 
@@ -92,6 +141,7 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
     if (human && human.chips === 0) {
       setShowRebuyModal(true);
     } else {
+      setManualReviewId(null);
       startHand();
     }
   };
@@ -135,7 +185,7 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
         {/* 顶部：控制条 */}
         <div className="absolute top-0 left-0 w-full p-4 flex justify-between items-center z-10">
           <div className="bg-black/50 px-4 py-2 rounded-full text-sm font-bold text-gray-300">
-            {table.name} ({table.smallBlind}/{table.bigBlind})
+            {table.name} ({table.smallBlind}/{table.bigBlind}){effective != null ? ` · 有效 ${stackText(effective, table.bigBlind)}` : ''}
           </div>
           <button onClick={handleLeave} className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-sm font-bold shadow-md transition-colors">
             站起离开
@@ -150,14 +200,14 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
             {players.filter(p => p.isAI)[1] && (() => {
               const p = players.filter(p => p.isAI)[1];
               const pIdx = players.findIndex(player => player.id === p.id);
-              const isDealer = pIdx === dealerIndex;
+              const isDealer = pIdx === buttonIndex;
               const isCurrent = pIdx === currentPlayerIndex && stage !== 'idle' && stage !== 'showdown';
 
               return (
                 <div className="flex flex-col items-center z-20 w-32">
                   <div className={`px-2 sm:px-4 py-1 sm:py-2 rounded-lg shadow-lg text-center w-full mb-2 ${isCurrent ? 'bg-yellow-600 ring-4 ring-yellow-400' : 'bg-gray-800'}`}>
                     <div className="font-bold text-xs sm:text-sm truncate">{p.name}</div>
-                    <div className="text-green-400 text-xs">${p.chips}</div>
+                    <div className="text-[10px] text-gray-300">{seatRole(pIdx, buttonIndex, players.length)} · {stackText(p.chips, table.bigBlind)}</div>
                   </div>
 
                   <div className="flex items-center space-x-1 sm:space-x-2 mb-2 h-6">
@@ -191,14 +241,14 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
             {players.filter(p => p.isAI)[0] && (() => {
               const p = players.filter(p => p.isAI)[0];
               const pIdx = players.findIndex(player => player.id === p.id);
-              const isDealer = pIdx === dealerIndex;
+              const isDealer = pIdx === buttonIndex;
               const isCurrent = pIdx === currentPlayerIndex && stage !== 'idle' && stage !== 'showdown';
               
               return (
                 <div className="flex flex-col items-center z-20 w-24 sm:w-32">
                   <div className={`px-2 sm:px-4 py-1 sm:py-2 rounded-lg mb-2 shadow-lg text-center w-full ${isCurrent ? 'bg-yellow-600 ring-4 ring-yellow-400' : 'bg-gray-800'}`}>
                     <div className="font-bold text-xs sm:text-sm truncate">{p.name}</div>
-                    <div className="text-green-400 text-xs">${p.chips}</div>
+                    <div className="text-[10px] text-gray-300">{seatRole(pIdx, buttonIndex, players.length)} · {stackText(p.chips, table.bigBlind)}</div>
                   </div>
                   
                   <div className="flex items-center space-x-1 sm:space-x-2 mb-2 h-6">
@@ -255,14 +305,14 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
             {players.filter(p => p.isAI)[2] && (() => {
               const p = players.filter(p => p.isAI)[2];
               const pIdx = players.findIndex(player => player.id === p.id);
-              const isDealer = pIdx === dealerIndex;
+              const isDealer = pIdx === buttonIndex;
               const isCurrent = pIdx === currentPlayerIndex && stage !== 'idle' && stage !== 'showdown';
               
               return (
                 <div className="flex flex-col items-center z-20 w-24 sm:w-32">
                   <div className={`px-2 sm:px-4 py-1 sm:py-2 rounded-lg mb-2 shadow-lg text-center w-full ${isCurrent ? 'bg-yellow-600 ring-4 ring-yellow-400' : 'bg-gray-800'}`}>
                     <div className="font-bold text-xs sm:text-sm truncate">{p.name}</div>
-                    <div className="text-green-400 text-xs">${p.chips}</div>
+                    <div className="text-[10px] text-gray-300">{seatRole(pIdx, buttonIndex, players.length)} · {stackText(p.chips, table.bigBlind)}</div>
                   </div>
                   
                   <div className="flex items-center space-x-1 sm:space-x-2 mb-2 h-6">
@@ -305,7 +355,7 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
 
               {/* 状态 / 下注 */}
               <div className="flex items-center space-x-2 mb-2 h-6">
-                {players.findIndex(p => p.id === 'human') === dealerIndex && (
+                {humanSeat === buttonIndex && (
                   <div className="w-5 h-5 sm:w-6 sm:h-6 bg-white text-black rounded-full flex items-center justify-center text-xs font-bold shadow-md">D</div>
                 )}
                 {human.currentBet > 0 && <div className="px-3 py-1 bg-yellow-600/90 rounded-full text-xs sm:text-sm font-bold border border-yellow-400 shadow-lg">${human.currentBet}</div>}
@@ -314,8 +364,8 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
               </div>
 
               <div className={`px-4 sm:px-6 py-2 rounded-xl shadow-xl text-center border ${isHumanTurn ? 'bg-yellow-600 border-yellow-400 ring-4 ring-yellow-500/50' : 'bg-gray-800 border-gray-600'}`}>
-                <div className="font-bold text-base sm:text-lg">{human.name}</div>
-                <div className="text-green-400 font-mono text-base sm:text-lg">${human.chips}</div>
+                <div className="font-bold text-base sm:text-lg">{human.name}{humanRole ? ` · ${humanRole}` : ''}</div>
+                <div className="text-green-400 font-mono text-base sm:text-lg">{stackText(human.chips, table.bigBlind)}</div>
               </div>
 
             </div>
@@ -326,23 +376,32 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
         {/* 底部操作面板 */}
         <div className="bg-gray-900 p-2 sm:p-4 border-t border-gray-700 flex justify-center items-center flex-shrink-0 min-h-[5rem] sm:min-h-[6rem] z-30">
           {stage === 'idle' || stage === 'showdown' ? (
-            <button
-              onClick={handleDealClick}
-              className={`px-8 py-3 rounded-xl font-bold text-lg shadow-lg transition-colors ${
-                human && human.chips === 0 
-                  ? 'bg-orange-600 hover:bg-orange-500 ring-4 ring-orange-500/50' 
-                  : 'bg-blue-600 hover:bg-blue-500'
-              }`}
-            >
-              {stage === 'showdown' 
-                ? (human && human.chips === 0 ? `重新买入 $${table.buyIn} (Rebuy)` : '下一手 (Next Hand)') 
-                : '开始游戏 (Deal)'}
-            </button>
+            <div className="flex flex-wrap justify-center gap-2">
+              <button
+                onClick={() => latestHand && setManualReviewId(latestHand.id)}
+                disabled={!latestHand}
+                className="px-5 py-3 rounded-xl font-bold bg-gray-700 disabled:text-gray-500"
+              >
+                本手回顾
+              </button>
+              <button
+                onClick={handleDealClick}
+                className={`px-8 py-3 rounded-xl font-bold text-lg shadow-lg transition-colors ${
+                  human && human.chips === 0 
+                    ? 'bg-orange-600 hover:bg-orange-500 ring-4 ring-orange-500/50' 
+                    : 'bg-blue-600 hover:bg-blue-500'
+                }`}
+              >
+                {stage === 'showdown' 
+                  ? (human && human.chips === 0 ? `重新买入 $${table.buyIn}` : '下一手') 
+                  : '开始游戏'}
+              </button>
+            </div>
           ) : showRaisePanel && human ? (
             /* 加注尺寸面板：滑杆 + 快捷尺寸 + 确认/取消 */
             <div className="flex flex-col items-center gap-2 w-full max-w-md px-2">
               <div className="flex items-baseline gap-2">
-                <span className="text-gray-300 text-sm">{currentMaxBet === 0 ? '下注' : '加注'}到</span>
+                <span className="text-gray-300 text-sm">{verb}到</span>
                 <span className="text-yellow-400 font-bold text-2xl">${raiseSize}</span>
                 <span className="text-gray-500 text-xs">(再投入 ${Math.max(0, raiseSize - human.currentBet)})</span>
               </div>
@@ -363,18 +422,26 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
               </div>
 
               <div className="flex flex-wrap justify-center gap-2">
-                {raisePresets.map(p => (
+                {plan.shortcuts.map((shortcut) => (
                   <button
-                    key={p.label}
-                    onClick={() => setRaiseSize(p.value)}
+                    key={shortcut.id}
+                    onClick={() => setRaiseSize(shortcut.raiseTo)}
                     className={`px-3 py-1 rounded-lg text-xs sm:text-sm font-bold transition-all ${
-                      raiseSize === p.value ? 'bg-purple-600 ring-2 ring-purple-400' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                      raiseSize === shortcut.raiseTo ? 'bg-purple-600 ring-2 ring-purple-400' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
                     }`}
                   >
-                    {p.label} ${p.value}
+                    {shortcut.label}
                   </button>
                 ))}
               </div>
+              <input
+                type="number"
+                min={raiseMin}
+                max={raiseMax}
+                value={raiseSize}
+                onChange={(event) => setRaiseSize(Number(event.target.value))}
+                className="w-28 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm"
+              />
 
               <div className="flex gap-3 mt-1">
                 <button
@@ -387,14 +454,21 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                   onClick={handleRaiseConfirm}
                   className="px-4 sm:px-6 py-2 rounded-xl font-bold bg-purple-600 hover:bg-purple-500 transition-all"
                 >
-                  确认{currentMaxBet === 0 ? '下注' : '加注'} ${raiseSize}
+                  确认{verb} ${raiseSize}
                 </button>
               </div>
             </div>
           ) : (
+            <div className="flex flex-col items-center gap-2">
+            {isHumanTurn && quote && quote.toCall > 0 && (
+              <p className="text-xs text-gray-300 text-center max-w-xl">{quote.label}</p>
+            )}
+            {isHumanTurn && effective != null && (
+              <p className="text-[11px] text-gray-500">有效筹码 {stackText(effective, table.bigBlind)}{humanRole ? ` · ${humanRole}` : ''}</p>
+            )}
             <div className="flex flex-wrap justify-center gap-2 sm:gap-4">
               <button
-                onClick={playerFold}
+                onClick={() => playerFold()}
                 disabled={!isHumanTurn}
                 className={`px-4 sm:px-6 py-2 rounded-xl font-bold transition-all ${isHumanTurn ? 'bg-red-600 hover:bg-red-500' : 'bg-gray-700 text-gray-500'}`}
               >
@@ -403,7 +477,7 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
               
               {currentMaxBet === (human?.currentBet || 0) ? (
                 <button 
-                  onClick={playerCheck}
+                  onClick={() => playerCheck()}
                   disabled={!isHumanTurn}
                   className={`px-4 sm:px-6 py-2 rounded-xl font-bold transition-all ${isHumanTurn ? 'bg-green-600 hover:bg-green-500' : 'bg-gray-700 text-gray-500'}`}
                 >
@@ -411,11 +485,11 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                 </button>
               ) : (
                 <button 
-                  onClick={playerCall}
+                  onClick={() => playerCall()}
                   disabled={!isHumanTurn}
                   className={`px-4 sm:px-6 py-2 rounded-xl font-bold transition-all ${isHumanTurn ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-700 text-gray-500'}`}
                 >
-                  跟注 (Call ${currentMaxBet - (human?.currentBet || 0)})
+                  跟注 ${quote?.callCost ?? amountToCall}
                 </button>
               )}
               
@@ -424,7 +498,7 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                 disabled={!isHumanTurn || !human?.canRaise}
                 className={`px-4 sm:px-6 py-2 rounded-xl font-bold transition-all ${isHumanTurn && human?.canRaise ? 'bg-purple-600 hover:bg-purple-500' : 'bg-gray-700 text-gray-500'}`}
               >
-                加注 (Raise)
+                {verb}
               </button>
 
               <button
@@ -434,6 +508,7 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
               >
                 All-in
               </button>
+            </div>
             </div>
           )}
         </div>
@@ -460,9 +535,24 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
 
         {/* 教学提示与图鉴（Module 6） */}
         <div className="h-64 lg:h-auto lg:flex-1">
-          <TeachingPanel humanCards={human?.cards || []} boardCards={board} />
+          <TeachingPanel
+            humanCards={human?.cards || []}
+            boardCards={board}
+            role={humanRole}
+            raiseCount={raiseCount}
+          />
         </div>
       </div>
+
+      {reviewId && (
+        <HandReview
+          handId={reviewId}
+          onClose={() => {
+            if (reviewId === pendingAutoOpenId) consumeAutoOpen(pendingAutoOpenId);
+            setManualReviewId(null);
+          }}
+        />
+      )}
 
       {/* Rebuy 确认 Modal */}
       {showRebuyModal && (
