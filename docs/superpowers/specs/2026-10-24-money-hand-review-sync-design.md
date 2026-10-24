@@ -2,7 +2,7 @@
 
 日期：2026-10-24（Asia/Shanghai）
 
-状态：待实施。基线：`d3de8d2`。配套计划：`docs/superpowers/plans/2026-10-24-money-hand-review-sync.md`。
+状态：已实施（2026-10-24）。基线：`d3de8d2` / 文档 `abc343c`。配套计划：`docs/superpowers/plans/2026-10-24-money-hand-review-sync.md`。实现差异见计划「结果记录」。
 
 ## 1. 本轮范围
 
