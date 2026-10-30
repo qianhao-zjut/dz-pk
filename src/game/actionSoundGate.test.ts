@@ -78,7 +78,7 @@ describe('actionSoundGate', () => {
   it('跟注、下注、加注、弃牌和全下用不同声音', () => {
     const box = harness();
     box.gate.onFrame(frame({ streetActions: [] }));
-    const call = act({ actorId: 'ai_0', stage: 'flop', kind: 'call' });
+    const call = act({ actorId: 'ai_0', stage: 'preflop', kind: 'call' });
     const bet = act({ actorId: 'ai_1', stage: 'flop', kind: 'raise', to: 10 });
     const raised = act({ actorId: 'ai_2', stage: 'flop', kind: 'raise', to: 40 });
     const folded = act({ actorId: 'human', stage: 'turn', kind: 'fold' });
@@ -86,7 +86,7 @@ describe('actionSoundGate', () => {
     const statuses: Record<string, SeatStatus> = {
       ai_0: 'active', ai_1: 'active', ai_2: 'active', human: 'folded',
     };
-    box.gate.onFrame(frame({ stage: 'flop', streetActions: [call], statuses }));
+    box.gate.onFrame(frame({ stage: 'preflop', streetActions: [call], statuses }));
     box.gate.onFrame(frame({ stage: 'flop', streetActions: [call, bet], statuses }));
     box.gate.onFrame(frame({ stage: 'flop', streetActions: [call, bet, raised], statuses }));
     box.gate.onFrame(frame({ stage: 'turn', streetActions: [call, bet, raised, folded], statuses }));
@@ -96,6 +96,21 @@ describe('actionSoundGate', () => {
       statuses: { ...statuses, ai_0: 'all-in' },
     }));
     expect(box.played).toEqual(['call', 'bet', 'raise', 'fold', 'all-in']);
+  });
+
+  it('翻后跟注后的加注用加注声', () => {
+    const box = harness();
+    box.gate.onFrame(frame({ streetActions: [] }));
+    const call = act({ actorId: 'ai_0', stage: 'flop', kind: 'call' });
+    const raise = act({ actorId: 'ai_1', stage: 'flop', kind: 'raise', to: 10 });
+    box.gate.onFrame(frame({ stage: 'flop', streetActions: [call], statuses: { ai_0: 'active' } }));
+    box.gate.onFrame(frame({
+      stage: 'flop',
+      streetActions: [call, raise],
+      statuses: { ai_0: 'active', ai_1: 'active' },
+    }));
+    expect(box.played).toEqual(['call', 'raise']);
+    expect(box.played).not.toContain('bet');
   });
 
   it('同一帧的多条行动按顺序播放', () => {

@@ -26,16 +26,7 @@ export function cueForAction(
   if (action.kind === 'fold' || status === 'folded') return 'fold';
   if (action.kind === 'check') return 'check';
   if (action.kind === 'call') return 'call';
-  if (action.kind === 'raise') {
-    if (isOpeningBet(action, streetActions)) return 'bet';
-    if (action.stage === 'preflop') return 'raise';
-    const index = streetActions.indexOf(action);
-    if (index < 0) return 'raise';
-    const hadPriorBet = streetActions.slice(0, index).some(
-      (item) => item.stage === action.stage && (item.kind === 'post' || item.kind === 'raise'),
-    );
-    return hadPriorBet ? 'raise' : 'bet';
-  }
+  if (action.kind === 'raise') return isOpeningBet(action, streetActions) ? 'bet' : 'raise';
   return null;
 }
 
