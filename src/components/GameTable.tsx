@@ -12,6 +12,8 @@ import { actionShortcuts, raiseVerb, type StreetName } from '../game/shortcuts';
 import { seatRole, stackText } from '../game/positions';
 import { reviewAutoOpenDecision } from '../game/reviewGate';
 import { seatActionLabel } from '../game/seatActionLabel';
+import { liveActionSound, primeActionAudio } from '../game/actionSound';
+import { readSoundEnabled, writeSoundEnabled } from '../game/soundPreference';
 
 function SeatActionLine({
   dealer,
@@ -85,6 +87,14 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
   const [raiseText, setRaiseText] = useState('');
   const [raiseError, setRaiseError] = useState<string | null>(null);
 
+  const [soundOn, setSoundOn] = useState(() => readSoundEnabled());
+  const toggleSound = () => {
+    const next = !soundOn;
+    setSoundOn(next);
+    writeSoundEnabled(next);
+    if (next) primeActionAudio();
+  };
+
   // 轮到别人行动时自动收起加注面板
   const isHumanTurnNow = stage !== 'idle' && stage !== 'showdown' && players[currentPlayerIndex]?.id === 'human';
   useEffect(() => {
@@ -95,6 +105,21 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [gameLog]);
+
+  useEffect(() => {
+    const statuses: Record<string, typeof players[number]['status']> = {};
+    for (const player of players) statuses[player.id] = player.status;
+    const humanPlayer = players.find((player) => player.id === 'human') ?? null;
+    return liveActionSound.onFrame({
+      handNumber,
+      stage,
+      streetActions,
+      currentPlayerIndex,
+      currentPlayerId: players[currentPlayerIndex]?.id ?? null,
+      humanStatus: humanPlayer?.status ?? null,
+      statuses,
+    });
+  }, [handNumber, stage, streetActions, players, currentPlayerIndex]);
 
   useEffect(() => {
     if (autoDecision === 'drop' && pendingAutoOpenId) consumeAutoOpen(pendingAutoOpenId);
@@ -244,9 +269,14 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
           <div className="bg-black/50 px-4 py-2 rounded-full text-sm font-bold text-gray-300">
             {table.name} ({table.smallBlind}/{table.bigBlind}){effective != null ? ` · 有效 ${stackText(effective, table.bigBlind)}` : ''}
           </div>
-          <button onClick={handleLeave} className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-sm font-bold shadow-md transition-colors">
-            站起离开
-          </button>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={toggleSound} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-bold shadow-md transition-colors">
+              {soundOn ? '音效开' : '音效关'}
+            </button>
+            <button onClick={handleLeave} className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-sm font-bold shadow-md transition-colors">
+              站起离开
+            </button>
+          </div>
         </div>
 
         {/* 牌桌渲染区 (无牌桌背景，纯净排版) */}

@@ -2,7 +2,7 @@
 
 日期：2026-10-30（Asia/Shanghai）
 
-状态：待实现。
+状态：已实现。
 
 配套计划：`docs/superpowers/plans/2026-10-30-action-feedback.md`。
 

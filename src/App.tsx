@@ -4,6 +4,7 @@ import type { TableConfig } from './components/Lobby';
 import { GameTable } from './components/GameTable';
 import { useGameStore } from './store/gameStore';
 import { useBankrollStore } from './store/bankrollStore';
+import { primeActionAudio } from './game/actionSound';
 
 function App() {
   const [currentTable, setCurrentTable] = useState<TableConfig | null>(null);
@@ -12,6 +13,7 @@ function App() {
 
   const handleJoin = (table: TableConfig) => {
     if (deductFunds(table.buyIn)) {
+      primeActionAudio();
       setCurrentTable(table);
       joinTable(table, table.buyIn);
     }
