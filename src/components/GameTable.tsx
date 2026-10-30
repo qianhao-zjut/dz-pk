@@ -11,6 +11,45 @@ import { quoteCall } from '../game/priceQuote';
 import { actionShortcuts, raiseVerb, type StreetName } from '../game/shortcuts';
 import { seatRole, stackText } from '../game/positions';
 import { reviewAutoOpenDecision } from '../game/reviewGate';
+import { seatActionLabel } from '../game/seatActionLabel';
+
+function SeatActionLine({
+  dealer,
+  bet,
+  label,
+  human = false,
+}: {
+  dealer: boolean;
+  bet: number;
+  label: string | null;
+  human?: boolean;
+}) {
+  const dealerClass = human
+    ? 'w-5 h-5 sm:w-6 sm:h-6 text-xs'
+    : 'w-4 h-4 sm:w-5 sm:h-5 text-[10px]';
+  const betClass = human
+    ? 'px-3 py-1 bg-yellow-600/90 rounded-full text-xs sm:text-sm font-bold border border-yellow-400 shadow-lg'
+    : 'px-1 sm:px-2 bg-yellow-600/80 rounded text-[10px] sm:text-xs font-bold border border-yellow-400';
+  const rowClass = human
+    ? 'flex items-center justify-center space-x-2 mb-1 h-6'
+    : 'flex items-center justify-center space-x-1 sm:space-x-2 mb-1 h-6';
+  const loud = label === '弃牌' || label === '全下';
+  return (
+    <>
+      <div className={rowClass}>
+        {dealer && (
+          <div className={`${dealerClass} bg-white text-black rounded-full flex items-center justify-center font-bold shadow-md`}>D</div>
+        )}
+        {bet > 0 && <div className={betClass}>${bet}</div>}
+      </div>
+      <div className="h-5 mb-1 flex items-center justify-center text-[10px] sm:text-xs font-bold">
+        {label ? (
+          <span className={loud ? 'px-1 sm:px-2 bg-red-600/80 rounded' : 'px-1 sm:px-2 bg-black/50 rounded'}>{label}</span>
+        ) : null}
+      </div>
+    </>
+  );
+}
 
 export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
   const {
@@ -228,12 +267,11 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                     <div className="text-[10px] text-gray-300">{seatRole(pIdx, buttonIndex, players.length)} · {stackText(p.chips, table.bigBlind)}</div>
                   </div>
 
-                  <div className="flex items-center space-x-1 sm:space-x-2 mb-2 h-6">
-                    {isDealer && <div className="w-4 h-4 sm:w-5 sm:h-5 bg-white text-black rounded-full flex items-center justify-center text-[10px] font-bold shadow-md">D</div>}
-                    {p.currentBet > 0 && <div className="px-1 sm:px-2 bg-yellow-600/80 rounded text-[10px] sm:text-xs font-bold border border-yellow-400">${p.currentBet}</div>}
-                    {p.status === 'folded' && <div className="px-1 sm:px-2 bg-red-600/80 rounded text-[10px] sm:text-xs">Folded</div>}
-                    {p.status === 'all-in' && <div className="px-1 sm:px-2 bg-red-600/80 rounded text-[10px] sm:text-xs font-bold">ALL-IN</div>}
-                  </div>
+                  <SeatActionLine
+                    dealer={isDealer}
+                    bet={p.currentBet}
+                    label={seatActionLabel(p.id, p.status, stage, streetActions)}
+                  />
 
                   <div className="flex space-x-1">
                     {p.status === 'active' || p.status === 'all-in' ? (
@@ -269,12 +307,11 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                     <div className="text-[10px] text-gray-300">{seatRole(pIdx, buttonIndex, players.length)} · {stackText(p.chips, table.bigBlind)}</div>
                   </div>
                   
-                  <div className="flex items-center space-x-1 sm:space-x-2 mb-2 h-6">
-                    {isDealer && <div className="w-4 h-4 sm:w-5 sm:h-5 bg-white text-black rounded-full flex items-center justify-center text-[10px] font-bold shadow-md">D</div>}
-                    {p.currentBet > 0 && <div className="px-1 sm:px-2 bg-yellow-600/80 rounded text-[10px] sm:text-xs font-bold border border-yellow-400">${p.currentBet}</div>}
-                    {p.status === 'folded' && <div className="px-1 sm:px-2 bg-red-600/80 rounded text-[10px] sm:text-xs">Folded</div>}
-                    {p.status === 'all-in' && <div className="px-1 sm:px-2 bg-red-600/80 rounded text-[10px] sm:text-xs font-bold">ALL-IN</div>}
-                  </div>
+                  <SeatActionLine
+                    dealer={isDealer}
+                    bet={p.currentBet}
+                    label={seatActionLabel(p.id, p.status, stage, streetActions)}
+                  />
 
                   <div className="flex space-x-1">
                     {p.status === 'active' || p.status === 'all-in' ? (
@@ -333,12 +370,11 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                     <div className="text-[10px] text-gray-300">{seatRole(pIdx, buttonIndex, players.length)} · {stackText(p.chips, table.bigBlind)}</div>
                   </div>
                   
-                  <div className="flex items-center space-x-1 sm:space-x-2 mb-2 h-6">
-                    {isDealer && <div className="w-4 h-4 sm:w-5 sm:h-5 bg-white text-black rounded-full flex items-center justify-center text-[10px] font-bold shadow-md">D</div>}
-                    {p.currentBet > 0 && <div className="px-1 sm:px-2 bg-yellow-600/80 rounded text-[10px] sm:text-xs font-bold border border-yellow-400">${p.currentBet}</div>}
-                    {p.status === 'folded' && <div className="px-1 sm:px-2 bg-red-600/80 rounded text-[10px] sm:text-xs">Folded</div>}
-                    {p.status === 'all-in' && <div className="px-1 sm:px-2 bg-red-600/80 rounded text-[10px] sm:text-xs font-bold">ALL-IN</div>}
-                  </div>
+                  <SeatActionLine
+                    dealer={isDealer}
+                    bet={p.currentBet}
+                    label={seatActionLabel(p.id, p.status, stage, streetActions)}
+                  />
 
                   <div className="flex space-x-1">
                     {p.status === 'active' || p.status === 'all-in' ? (
@@ -372,14 +408,12 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
               </div>
 
               {/* 状态 / 下注 */}
-              <div className="flex items-center space-x-2 mb-2 h-6">
-                {humanSeat === buttonIndex && (
-                  <div className="w-5 h-5 sm:w-6 sm:h-6 bg-white text-black rounded-full flex items-center justify-center text-xs font-bold shadow-md">D</div>
-                )}
-                {human.currentBet > 0 && <div className="px-3 py-1 bg-yellow-600/90 rounded-full text-xs sm:text-sm font-bold border border-yellow-400 shadow-lg">${human.currentBet}</div>}
-                {human.status === 'folded' && <div className="px-2 bg-red-600/80 rounded text-xs">Folded</div>}
-                {human.status === 'all-in' && <div className="px-2 bg-red-600/80 rounded text-xs font-bold">ALL-IN</div>}
-              </div>
+              <SeatActionLine
+                human
+                dealer={humanSeat === buttonIndex}
+                bet={human.currentBet}
+                label={seatActionLabel(human.id, human.status, stage, streetActions)}
+              />
 
               <div className={`px-4 sm:px-6 py-2 rounded-xl shadow-xl text-center border ${isHumanTurn ? 'bg-yellow-600 border-yellow-400 ring-4 ring-yellow-500/50' : 'bg-gray-800 border-gray-600'}`}>
                 <div className="font-bold text-base sm:text-lg">{human.name}{humanRole ? ` · ${humanRole}` : ''}</div>
