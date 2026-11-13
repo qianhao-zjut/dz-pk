@@ -88,19 +88,30 @@ describe('翻前范围、位置和风格', () => {
     expect(decide(utg, PROFILES.ai_0, { rng: () => 0.5 }).decision.move.action).toBe('fold');
   });
 
-  it('三人时原来的枪口位按按钮范围，两人时按短桌范围', () => {
+  it('坐出后按剩余参与者决定角色，两人仍用短桌图表', () => {
     const players = four(3, ['7h', '6h']);
     players[1] = { ...players[1], status: 'sitting-out', chips: 0 };
-    const three = must({ currentPlayerIndex: 3, players });
-    expect(decide(three, PROFILES.ai_0).decision.move.action).toBe('raise');
+    const blind = must({ currentPlayerIndex: 3, players });
+    expect(decide(blind, PROFILES.ai_0).diagnosis.position).toBe('BB');
+    expect(decide(blind, PROFILES.ai_0).diagnosis.rangeBucket).toBe('BB');
+
+    const buttonPlayers = four(0, ['7h', '6h']);
+    buttonPlayers[1] = { ...buttonPlayers[1], status: 'sitting-out', chips: 0 };
+    const button = must({ currentPlayerIndex: 0, players: buttonPlayers });
+    expect(decide(button, PROFILES.ai_0).diagnosis.position).toBe('BTN');
+    expect(decide(button, PROFILES.ai_0).decision.move.action).toBe('raise');
 
     const heads = four(3, ['7h', '7d']);
     heads[1] = { ...heads[1], status: 'sitting-out' };
     heads[2] = { ...heads[2], status: 'sitting-out' };
     const hu = must({ currentPlayerIndex: 3, players: heads });
     const full = must({ currentPlayerIndex: 3, players: four(3, ['7h', '7d']) });
+    expect(decide(hu, PROFILES.ai_2).diagnosis.rangeBucket).toBe('HU');
+    expect(decide(hu, PROFILES.ai_2).diagnosis.position).toBe('BB');
     expect(decide(hu, PROFILES.ai_2).decision.move.action).toBe('raise');
     expect(decide(full, PROFILES.ai_2).decision.move.action).toBe('fold');
+    expect(decide(full, PROFILES.ai_2).diagnosis.position).toBe('UTG');
+    expect(decide(full, PROFILES.ai_2).diagnosis.rangeBucket).toBe('legacy');
   });
 
   it('同一起手牌上三个风格方向不同', () => {

@@ -327,7 +327,7 @@ export const PROFILES: Record<ProfileId, AIProfile> = {
   },
 };
 
-export const RANGE_CONFIG_VERSION = '2026-10-24.2';
+export const RANGE_CONFIG_VERSION = '2026-11-13.1';
 
 export function profileFor(id: string): AIProfile {
   return PROFILES[id as ProfileId] ?? PROFILES.ai_0;

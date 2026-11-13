@@ -38,17 +38,23 @@ export const ReviewBody: React.FC<{ hand: CompletedHand }> = ({ hand }) => {
     <div className="space-y-4 text-sm">
       <div>
         <h2 className="text-xl font-bold">第 {hand.handNumber} 手回顾</h2>
-        <p className="text-gray-400">{hand.config.levelName} · {hand.config.buyInBb}bb · 买入 ${hand.config.buyIn}</p>
+        <p className="text-gray-400">
+          {hand.config.levelName}
+          {hand.config.tableSize ? ` · ${hand.config.tableSize} 人桌` : ` · ${hand.seats.length} 人`}
+          {' · '}{hand.config.buyInBb}bb · 买入 ${hand.config.buyIn}
+        </p>
         <p className={human && human.net >= 0 ? 'text-green-400 text-lg font-bold' : 'text-red-300 text-lg font-bold'}>
           本手结果 {human ? money(human.net) : '—'}
         </p>
       </div>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         {hand.seats.map((seat) => {
           const end = hand.results.find((result) => result.id === seat.id);
+          const count = hand.participantSeats?.length ?? hand.seats.filter((item) => item.role).length;
+          const roleText = seat.role ? `${seat.role} ${roleLabel(seat.role, count)}` : '坐出';
           return (
             <div key={seat.id} className="bg-gray-800 rounded-lg p-2">
-              <div className="font-bold">{seat.name} · {seat.role} {roleLabel(seat.role)}{seat.style ? ` · ${seat.style}` : ''}</div>
+              <div className="font-bold">{seat.name} · {roleText}{seat.style ? ` · ${seat.style}` : ''}</div>
               <div>{seat.holeCards.join(' ') || '无牌'}</div>
               <div className="text-gray-400">{money(seat.chipsBefore)} → {end ? money(end.chips) : '—'}（{end ? money(end.net) : '—'}）</div>
             </div>
@@ -86,6 +92,7 @@ export const ReviewBody: React.FC<{ hand: CompletedHand }> = ({ hand }) => {
                     <div className="mt-1 text-yellow-200">
                       实际依据：{reasonText(action.npc.reasonCode, action.npc.fallback)}
                       {action.npc.position ? ` · ${action.npc.position}` : ''}
+                      {action.npc.rangeBucket ? ` · 分档 ${action.npc.rangeBucket}` : ''}
                       {action.npc.priceTier ? ` · 价格 ${action.npc.priceTier}` : ''}
                       {action.npc.stackDepth ? ` · ${action.npc.stackDepth}` : ''}
                       {actionContextText(action.npc.actionContext) ? ` · ${actionContextText(action.npc.actionContext)}` : ''}
@@ -94,7 +101,7 @@ export const ReviewBody: React.FC<{ hand: CompletedHand }> = ({ hand }) => {
                       {action.npc.equity != null ? ` · 抽样权益 ${(action.npc.equity * 100).toFixed(0)}%（${action.npc.samples} 次）` : ''}
                     </div>
                   )}
-                  {action.npc && <div className="text-gray-500">{practiceTip(actor?.role ?? 'UTG')}</div>}
+                  {action.npc && <div className="text-gray-500">{practiceTip(actor?.role ?? null)}</div>}
                 </div>
               );
             })}

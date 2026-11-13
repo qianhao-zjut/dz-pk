@@ -11,7 +11,7 @@ const JSON_CLOSE = '\n```';
 
 const STREETS = new Set(['preflop', 'flop', 'turn', 'river']);
 const ACTION_KINDS = new Set(['post', 'fold', 'check', 'call', 'raise']);
-const ROLES = new Set(['BTN', 'SB', 'BB', 'UTG']);
+const ROLES = new Set(['BTN', 'SB', 'BB', 'UTG', 'UTG+1', 'UTG+2', 'LJ', 'HJ', 'CO']);
 
 export type HandReviewFailureCode = 'invalid_hand' | 'body_too_large' | 'payload_too_large';
 
@@ -106,15 +106,21 @@ export function parseCompletedHandFromBody(body: string): CompletedHand | null {
 }
 
 function renderBody(hand: CompletedHand): string {
-  const summary = [
+  const parts = [
     `第 ${hand.handNumber} 手`,
     hand.config.levelName,
+  ];
+  if (hand.config.tableSize === 4 || hand.config.tableSize === 6 || hand.config.tableSize === 9) {
+    parts.push(`${hand.config.tableSize} 人桌`);
+  }
+  parts.push(
     `${hand.config.buyInBb}bb`,
     `买入 $${hand.config.buyIn}`,
     `底牌 ${holeText(hand)}`,
     `结果 ${netText(hand)}`,
     hand.endKind === 'folds' ? '弃牌结束' : '摊牌',
-  ].join(' · ');
+  );
+  const summary = parts.join(' · ');
   const prefix = hasIntegrityIssue(hand) ? `${summary}\n${INTEGRITY_NOTE}` : summary;
   return `${prefix}${JSON_OPEN}${JSON.stringify(hand)}${JSON_CLOSE}`;
 }
@@ -193,6 +199,12 @@ function uploadIssues(value: unknown): string[] {
   if (!isTimestamp(value.endedAt)) issues.push('endedAt');
   issues.push(...configIssues(value.config));
   if (!Number.isSafeInteger(value.dealerIndex) || (value.dealerIndex as number) < 0) issues.push('dealerIndex');
+  if ('participantSeats' in value) {
+    const seats = value.participantSeats;
+    if (!Array.isArray(seats) || seats.some((seat) => !Number.isSafeInteger(seat) || (seat as number) < 0)) {
+      issues.push('participantSeats');
+    }
+  }
   issues.push(...seatIssues(value.seats, value.results));
   if (!isStringArray(value.board)) issues.push('board');
   issues.push(...actionIssues(value.actions));
@@ -215,6 +227,9 @@ function configIssues(value: unknown): string[] {
   if (!Array.isArray(value.npcs) || value.npcs.some((seat) => !isNpcSeat(seat))) issues.push('config.npcs');
   if ('npcConfigVersion' in value && (typeof value.npcConfigVersion !== 'string' || value.npcConfigVersion === '')) {
     issues.push('config.npcConfigVersion');
+  }
+  if ('tableSize' in value && value.tableSize !== 4 && value.tableSize !== 6 && value.tableSize !== 9) {
+    issues.push('config.tableSize');
   }
   return issues;
 }
@@ -261,7 +276,7 @@ function isSeat(value: unknown): boolean {
     && typeof value.name === 'string'
     && (value.profileId === null || typeof value.profileId === 'string')
     && (value.style === null || typeof value.style === 'string')
-    && ROLES.has(value.role as string)
+    && (value.role === null || ROLES.has(value.role as string))
     && isFiniteNumber(value.chipsBefore)
     && isStringArray(value.holeCards);
 }
@@ -303,7 +318,8 @@ function isNpcContext(value: unknown): boolean {
     && typeof value.fallback === 'boolean'
     && optionalNullableId(value, 'referenceOpponentId')
     && optionalNullableNumber(value, 'effectiveStackBb')
-    && optionalNullableId(value, 'actionContext');
+    && optionalNullableId(value, 'actionContext')
+    && optionalNullableId(value, 'rangeBucket');
 }
 
 function optionalNullableId(value: Record<string, unknown>, key: string): boolean {

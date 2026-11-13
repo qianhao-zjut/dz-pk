@@ -11,6 +11,7 @@ export interface NpcActionContext {
   referenceOpponentId?: string | null;
   effectiveStackBb?: number | null;
   actionContext?: string | null;
+  rangeBucket?: string | null;
   samples: number;
   equity: number | null;
   evReference: number | null;

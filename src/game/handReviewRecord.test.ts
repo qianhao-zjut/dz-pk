@@ -502,4 +502,56 @@ describe('hand_review v1 记录', () => {
     expect(result).not.toHaveProperty('body');
     expect(result).not.toHaveProperty('client_key');
   });
+
+  it('六人和九人的新位置、底牌和分档能上传，旧四人档案不被改写', () => {
+    const legacy = showdownHand();
+    const legacyJson = JSON.stringify(legacy);
+    expect(buildHandReviewRecord(legacy).ok).toBe(true);
+    expect(JSON.stringify(legacy)).toBe(legacyJson);
+    expect(parseCompletedHandFromBody(buildHandReviewRecord(legacy).ok ? (buildHandReviewRecord(legacy) as { body: string }).body : '')).toEqual(legacy);
+
+    const hand = showdownHand();
+    hand.config = { ...hand.config, tableSize: 9 };
+    hand.seats = [
+      ...hand.seats,
+      { id: 'ai_3', name: '枪口加一', profileId: 'ai_0', style: '稳健', role: 'UTG+1', chipsBefore: 200, holeCards: ['Ts', '9s'] },
+      { id: 'ai_4', name: '枪口加二', profileId: 'ai_0', style: '稳健', role: 'UTG+2', chipsBefore: 200, holeCards: ['8s', '7s'] },
+      { id: 'ai_5', name: '中位', profileId: 'ai_1', style: '松凶', role: 'LJ', chipsBefore: 200, holeCards: ['6s', '5s'] },
+      { id: 'ai_6', name: '劫持位', profileId: 'ai_1', style: '松凶', role: 'HJ', chipsBefore: 200, holeCards: ['4s', '3s'] },
+      { id: 'ai_7', name: '坐出玩家', profileId: 'ai_2', style: '保守', role: null, chipsBefore: 0, holeCards: [] },
+    ];
+    hand.results = hand.seats.map((seat) => ({ id: seat.id, chips: seat.chipsBefore, net: 0 }));
+    hand.participantSeats = [0, 1, 2, 3, 4, 5, 6, 7];
+    hand.actions[3] = action({
+      ...hand.actions[3],
+      npc: npc({ position: 'CO', rangeBucket: 'late', assumptions: ['位置近似：实际 CO，图表 UTG 40% + BTN 60%'] }),
+    });
+    const built = buildHandReviewRecord(hand);
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.body).toContain('9 人桌');
+    const parsed = parseCompletedHandFromBody(built.body);
+    expect(parsed?.seats).toHaveLength(9);
+    expect(parsed?.seats.map((seat) => seat.holeCards)).toEqual(hand.seats.map((seat) => seat.holeCards));
+    expect(parsed?.seats[8]?.role).toBeNull();
+    expect(parsed?.actions[3]?.npc?.position).toBe('CO');
+    expect(parsed?.actions[3]?.npc?.rangeBucket).toBe('late');
+    expect(parsed?.participantSeats).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+
+    const snapshot = JSON.stringify(hand);
+    hand.actions[3] = action({
+      ...hand.actions[3]!,
+      npc: npc({ assumptions: ['注'.repeat(22_000)], position: 'CO', rangeBucket: 'late' }),
+    });
+    const huge = JSON.stringify(hand);
+    const failed = buildHandReviewRecord(hand);
+    expect(failed.ok).toBe(false);
+    if (failed.ok) return;
+    expect(failed.reasons).toContain('body_too_large');
+    expect(failed.message).toContain('未截断');
+    expect(JSON.stringify(hand)).toBe(huge);
+    expect(hand.seats).toHaveLength(9);
+    expect(hand.seats[4]?.holeCards).toEqual(['Ts', '9s']);
+    expect(snapshot).not.toBe(huge);
+  });
 });

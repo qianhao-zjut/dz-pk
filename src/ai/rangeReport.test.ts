@@ -143,7 +143,7 @@ describe('1326 组合范围报告', () => {
 
   it('报告文本带版本、分母和旧基线', () => {
     const text = renderRangeReport(rows);
-    expect(text).toContain('2026-10-24.2');
+    expect(text).toContain('2026-11-13.1');
     expect(text).toContain('1326');
     expect(text).toContain('23.68%');
     expect(text).toContain('BB 面对 BTN 2.5bb / 100bb');

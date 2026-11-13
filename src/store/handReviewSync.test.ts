@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CompletedHand, RecordedAction } from '../game/handRecord';
 import type { NpcActionContext } from '../ai/npcContext';
-import { buildHandReviewRecord } from '../game/handReviewRecord';
+import { buildHandReviewRecord, parseCompletedHandFromBody } from '../game/handReviewRecord';
+import { rolesForCount } from '../game/positions';
 import {
   HAND_REVIEW_OUTBOX_LS_KEY,
   createMemoryOutboxStorage,
@@ -621,5 +622,62 @@ describe('handReviewSync outbox', () => {
     expect(joined).not.toContain('/v1/records');
     expect(joined).not.toContain(hand.seats[0]!.holeCards.join(' '));
     spy.mockRestore();
+  });
+
+  it('六人和九人档案入队一次，重复入队不新增，解析后座位和分档还在', async () => {
+    const ranks = '23456789TJQKA';
+    const suits = 'shdc';
+    const deck = [...ranks].flatMap((rank) => [...suits].map((suit) => rank + suit));
+    for (const size of [6, 9] as const) {
+      const roles = rolesForCount(size);
+      expect(roles).toBeTruthy();
+      const hand = sampleHand(size, `ring-${size}`);
+      hand.config = { ...hand.config, tableSize: size };
+      hand.participantSeats = Array.from({ length: size }, (_, seat) => seat);
+      hand.seats = Array.from({ length: size }, (_, seat) => ({
+        id: seat === 0 ? 'human' : `ai_${seat - 1}`,
+        name: seat === 0 ? '你 (Player)' : `对手${seat}`,
+        profileId: seat === 0 ? null : 'ai_0',
+        style: seat === 0 ? null : '稳健',
+        role: roles?.[seat] ?? null,
+        chipsBefore: 1000,
+        holeCards: [deck[seat * 2], deck[seat * 2 + 1]],
+      }));
+      hand.results = hand.seats.map((seat) => ({ id: seat.id, chips: 1000, net: 0 }));
+      hand.actions = [
+        action({ actionSeq: 1, actorId: hand.seats[3].id, kind: 'raise', amountAdded: 25, raiseTo: 25 }),
+        action({
+          actionSeq: 2,
+          actorId: hand.seats[size - 1].id,
+          kind: 'raise',
+          amountAdded: 80,
+          raiseTo: 80,
+          npc: npc({
+            actorId: hand.seats[size - 1].id,
+            position: 'CO',
+            rangeBucket: 'late',
+            handKey: '76s',
+            assumptions: ['位置近似：实际 CO，分档 late'],
+          }),
+        }),
+      ];
+      const fetchImpl = vi.fn(async () => successResponse(hand, `rid-${size}`, 200));
+      boot({ fetchImpl });
+      await waitForHandReviewSyncReadyForTests();
+      await enqueueHandForTests(hand);
+      await enqueueHandForTests(hand);
+      expect(await getHandReviewOutboxForTests()).toHaveLength(1);
+      await flushHandReviewSyncForTests();
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const call = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+      const posted = JSON.parse(String(call[1].body)) as { body: string };
+      const parsed = parseCompletedHandFromBody(posted.body);
+      expect(parsed?.config.tableSize).toBe(size);
+      expect(parsed?.seats).toHaveLength(size);
+      expect(parsed?.seats.map((seat) => seat.holeCards)).toEqual(hand.seats.map((seat) => seat.holeCards));
+      expect(parsed?.actions[1]?.npc?.rangeBucket).toBe('late');
+      expect(parsed?.actions[1]?.npc?.position).toBe('CO');
+      resetHandReviewSyncForTests();
+    }
   });
 });

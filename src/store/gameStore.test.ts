@@ -6,7 +6,9 @@ import type { LiveHand, RecordedAction } from '../game/handRecord';
 import { sessionFromTable } from '../game/sessionConfig';
 import { createDeck } from '../utils/poker';
 import { buildObservation, toNpcSource } from '../ai/observation';
-import { getNpcDiagnostics, getNpcLimits, resetNpcRuntimeForTests, setNpcLimits } from '../ai/runtime';
+import { getNpcDiagnostics, getNpcLimits, resetNpcRuntimeForTests, setDecideOverrideForTests, setNpcLimits } from '../ai/runtime';
+import { buildHandReviewRecord, parseCompletedHandFromBody } from '../game/handReviewRecord';
+import { useHandHistoryStore } from './handHistoryStore';
 
 const TABLE: TableConfig = { id: 'test', name: '测试桌', smallBlind: 5, bigBlind: 10, buyIn: 1000 };
 
@@ -794,5 +796,272 @@ describe('合法整数仍走原有尺寸归一', () => {
     expect(state.currentMaxBet).toBe(130);
     expect(state.lastRaiseSize).toBe(90);
     expect(state.players[0].chips).toBe(870);
+  });
+});
+
+describe('六人和九人牌桌', () => {
+  it('按实际人数发牌、下盲并指定第一位行动者', () => {
+    for (const size of [6, 9] as const) {
+      const table: TableConfig = {
+        ...TABLE,
+        tableSize: size,
+        opponents: 'mixed',
+        npcs: Array.from({ length: size - 1 }, (_, index) => ({
+          id: `ai_${index}`,
+          name: `对手${index}`,
+          profileId: 'ai_0',
+          style: '稳健',
+        })),
+      };
+      useGameStore.getState().joinTable(table, 1000);
+      useGameStore.setState({ dealerIndex: 2 });
+      useGameStore.getState().startHand();
+      const state = useGameStore.getState();
+      expect(state.players).toHaveLength(size);
+      const holes = state.players.flatMap((player) => player.cards);
+      expect(new Set(holes).size).toBe(size * 2);
+      expect(state.players[3].currentBet).toBe(TABLE.smallBlind);
+      expect(state.players[4].currentBet).toBe(TABLE.bigBlind);
+      expect(state.currentPlayerIndex).toBe(5);
+      expect(state.liveHand?.dealerIndex).toBe(2);
+      expect(state.liveHand?.seats[2]?.role).toBe('BTN');
+      expect(state.liveHand?.seats[5]?.role).toBe('UTG');
+      expect(state.liveHand?.participantSeats?.[0]).toBe(2);
+      const roles = state.liveHand?.seats.map((seat) => seat.role);
+      let guard = 0;
+      while ((useGameStore.getState().players.filter((player) => player.status !== 'folded').length > 2) && guard < 20) {
+        useGameStore.getState().playerFold();
+        guard += 1;
+      }
+      expect(useGameStore.getState().liveHand?.seats.map((seat) => seat.role)).toEqual(roles);
+      expect(useGameStore.getState().stage).not.toBe('showdown');
+    }
+  });
+
+  it('两人按钮兼小盲，下一手按钮跳过坐出', () => {
+    useGameStore.getState().joinTable(TABLE, 1000);
+    useGameStore.setState({
+      dealerIndex: 0,
+      players: useGameStore.getState().players.map((player, seat) => (
+        seat === 1 || seat === 2 ? { ...player, chips: 0, isAI: false } : player
+      )),
+    });
+    useGameStore.getState().startHand();
+    const state = useGameStore.getState();
+    expect(state.players[0].currentBet).toBe(TABLE.smallBlind);
+    expect(state.players[3].currentBet).toBe(TABLE.bigBlind);
+    expect(state.currentPlayerIndex).toBe(0);
+    expect(state.players[1].cards).toEqual([]);
+    expect(state.liveHand?.seats[1]?.role).toBeNull();
+    expect(state.liveHand?.seats[0]?.role).toBe('BTN');
+    expect(state.liveHand?.seats[3]?.role).toBe('BB');
+
+    setupMidHand([
+      makePlayer({ id: 'human', isAI: false, cards: ['As', 'Kd'], chips: 100, invested: 10 }),
+      makePlayer({ id: 'out', isAI: false, cards: [], chips: 0, invested: 0, status: 'sitting-out' }),
+      makePlayer({ id: 'next', cards: ['Qh', 'Qc'], chips: 90, invested: 10 }),
+      makePlayer({ id: 'other', cards: ['2c', '3d'], chips: 80, invested: 10, status: 'folded' }),
+    ], { currentPlayerIndex: 0, currentMaxBet: 0, lastRaiseSize: 10, pot: 30, stage: 'river' });
+    useGameStore.setState({ board: ['2s', '7c', '9d', '4s', '3c'], dealerIndex: 0 });
+    useGameStore.getState().handleShowdown();
+    expect(useGameStore.getState().dealerIndex).toBe(2);
+  });
+
+  it('六人和九人多档全下后筹码为非负整数且总量守恒', () => {
+    const holes = [
+      ['As', 'Ah'], ['Kd', 'Kc'], ['Qd', 'Qc'], ['Jd', 'Jc'], ['Td', 'Tc'],
+      ['9d', '9c'], ['8d', '8c'], ['7d', '7c'], ['Ad', 'Ac'],
+    ];
+    for (const count of [6, 9]) {
+      const players = Array.from({ length: count }, (_, index) => makePlayer({
+        id: `p${index}`,
+        cards: holes[index],
+        chips: index === count - 1 ? 40 : 0,
+        invested: (index + 1) * 10,
+        status: index === count - 1 ? 'folded' : 'all-in',
+      }));
+      const pot = players.reduce((sum, player) => sum + player.invested, 0);
+      setupMidHand(players, { currentPlayerIndex: 0, currentMaxBet: 0, lastRaiseSize: 10, pot, stage: 'river' });
+      useGameStore.setState({ board: ['2c', '3d', '4h', '5s', '6c'], dealerIndex: 0 });
+      const before = totalChipsInSystem();
+      useGameStore.getState().handleShowdown();
+      const state = useGameStore.getState();
+      expect(state.players.every((player) => player.chips >= 0 && Number.isInteger(player.chips))).toBe(true);
+      expect(totalChipsInSystem()).toBe(before);
+      expect(state.pot).toBe(0);
+    }
+  });
+
+  it('离桌只返还人类筹码', () => {
+    const table: TableConfig = {
+      ...TABLE,
+      tableSize: 9,
+      npcs: Array.from({ length: 8 }, (_, index) => ({
+        id: `ai_${index}`,
+        name: `对手${index}`,
+        profileId: 'ai_1',
+        style: '松凶',
+      })),
+    };
+    useGameStore.getState().joinTable(table, 250);
+    expect(useGameStore.getState().players).toHaveLength(9);
+    expect(useGameStore.getState().players.filter((player) => player.isAI)).toHaveLength(8);
+    expect(useGameStore.getState().leaveTable()).toBe(250);
+    expect(useGameStore.getState().players).toEqual([]);
+  });
+
+  it('六人多人翻牌、九人冷跟再加注后，回顾保留全部座位和底牌', () => {
+    const play = (size: 6 | 9, steps: Array<{ seat: number; kind: 'fold' | 'call' | 'check' | 'raise'; to?: number }>) => {
+      const table: TableConfig = {
+        ...TABLE,
+        tableSize: size,
+        npcs: Array.from({ length: size - 1 }, (_, index) => ({
+          id: `ai_${index}`,
+          name: `对手${index}`,
+          profileId: 'ai_0' as const,
+          style: '稳健',
+        })),
+      };
+      useGameStore.getState().joinTable(table, 1000);
+      useGameStore.setState({ dealerIndex: 0 });
+      const before = totalChipsInSystem();
+      useGameStore.getState().startHand();
+      for (const step of steps) {
+        expect(useGameStore.getState().currentPlayerIndex).toBe(step.seat);
+        if (step.kind === 'fold') useGameStore.getState().playerFold();
+        else if (step.kind === 'call') useGameStore.getState().playerCall();
+        else if (step.kind === 'check') useGameStore.getState().playerCheck();
+        else expect(useGameStore.getState().playerRaise(step.to ?? 0)).toBe(true);
+      }
+      let guard = 0;
+      while (useGameStore.getState().stage !== 'showdown' && guard < 40) {
+        const actor = useGameStore.getState().players[useGameStore.getState().currentPlayerIndex];
+        if (actor.currentBet < useGameStore.getState().currentMaxBet) useGameStore.getState().playerCall();
+        else useGameStore.getState().playerCheck();
+        guard += 1;
+      }
+      expect(useGameStore.getState().stage).toBe('showdown');
+      expect(useGameStore.getState().pot).toBe(0);
+      expect(totalChipsInSystem()).toBe(before);
+      const hand = [...useHandHistoryStore.getState().hands].reverse().find((item) => item.seats.length === size);
+      expect(hand).toBeTruthy();
+      if (!hand) return;
+      expect(hand.config.tableSize).toBe(size);
+      expect(hand.seats.every((seat) => seat.holeCards.length === 2)).toBe(true);
+      expect(new Set(hand.seats.flatMap((seat) => seat.holeCards)).size).toBe(size * 2);
+      expect(hand.results).toHaveLength(size);
+      expect(hand.actions.some((action) => action.kind === 'raise')).toBe(true);
+      expect(hand.actions.some((action) => action.kind === 'call')).toBe(true);
+      const built = buildHandReviewRecord(hand);
+      expect(built.ok).toBe(true);
+      if (!built.ok) return;
+      const parsed = parseCompletedHandFromBody(built.body);
+      expect(parsed?.seats.map((seat) => seat.role)).toEqual(hand.seats.map((seat) => seat.role));
+      expect(parsed?.seats.map((seat) => seat.holeCards)).toEqual(hand.seats.map((seat) => seat.holeCards));
+    };
+
+    const checks = (seats: number[]) => ['flop', 'turn', 'river'].flatMap(() => seats.map((seat) => ({ seat, kind: 'check' as const })));
+    play(6, [
+      { seat: 3, kind: 'raise', to: 25 },
+      { seat: 4, kind: 'call' },
+      { seat: 5, kind: 'fold' },
+      { seat: 0, kind: 'fold' },
+      { seat: 1, kind: 'fold' },
+      { seat: 2, kind: 'call' },
+      ...checks([2, 3, 4]),
+    ]);
+    play(9, [
+      { seat: 3, kind: 'raise', to: 25 },
+      { seat: 4, kind: 'call' },
+      { seat: 5, kind: 'fold' },
+      { seat: 6, kind: 'fold' },
+      { seat: 7, kind: 'raise', to: 80 },
+      { seat: 8, kind: 'fold' },
+      { seat: 0, kind: 'fold' },
+      { seat: 1, kind: 'fold' },
+      { seat: 2, kind: 'fold' },
+      { seat: 3, kind: 'call' },
+      { seat: 4, kind: 'call' },
+      ...checks([3, 4, 7]),
+    ]);
+  });
+
+  it('九人枪口的决策依据写入本手动作，离桌、下一手和重复触发都不会落地', async () => {
+    setDecideOverrideForTests(null);
+    const table: TableConfig = {
+      ...TABLE,
+      tableSize: 9,
+      npcs: Array.from({ length: 8 }, (_, index) => ({
+        id: `ai_${index}`,
+        name: `对手${index}`,
+        profileId: 'ai_0' as const,
+        style: '稳健',
+      })),
+    };
+    useGameStore.getState().joinTable(table, 1000);
+    useGameStore.setState({ dealerIndex: 0 });
+    useGameStore.getState().startHand();
+    const players = useGameStore.getState().players.map((player) => ({ ...player, cards: [...player.cards] }));
+    players[3] = { ...players[3], cards: ['7h', '2c'] };
+    useGameStore.setState({ players });
+    await useGameStore.getState().actAI();
+    const folded = useGameStore.getState().liveHand?.actions.at(-1);
+    expect(folded?.kind).toBe('fold');
+    expect(folded?.npc?.position).toBe('UTG');
+    expect(folded?.npc?.rangeBucket).toBe('early-tight');
+    expect(folded?.npc?.handKey).toBe('72o');
+    expect(folded?.npc?.assumptions.some((line) => line.includes('位置近似'))).toBe(true);
+
+    useGameStore.getState().startHand();
+    const handNumber = useGameStore.getState().handNumber;
+    const pot = useGameStore.getState().pot;
+    setDecideOverrideForTests(() => {
+      useGameStore.getState().startHand();
+      return {
+        decision: { turnToken: 'stale', actorId: 'ai_2', move: { action: 'raise', raiseTo: 500 } },
+        diagnosis: {
+          profileId: 'ai_0', street: 'preflop', reasonCode: 'test', samples: 0,
+          equity: null, evReference: null, elapsedMs: 0, assumptions: [], handKey: null, position: 'UTG',
+        },
+      };
+    });
+    await useGameStore.getState().actAI();
+    expect(useGameStore.getState().handNumber).toBe(handNumber + 1);
+    expect(useGameStore.getState().pot).toBe(pot);
+    expect(useGameStore.getState().players.every((player) => player.currentBet <= TABLE.bigBlind)).toBe(true);
+
+    setDecideOverrideForTests((obs) => {
+      useGameStore.getState().leaveTable();
+      return {
+        decision: { turnToken: obs.turnToken, actorId: obs.actorId, move: { action: 'raise', raiseTo: 500 } },
+        diagnosis: {
+          profileId: 'ai_0', street: 'preflop', reasonCode: 'test', samples: 0,
+          equity: null, evReference: null, elapsedMs: 0, assumptions: [], handKey: null, position: 'UTG',
+        },
+      };
+    });
+    useGameStore.getState().joinTable(table, 1000);
+    useGameStore.setState({ dealerIndex: 0 });
+    useGameStore.getState().startHand();
+    await useGameStore.getState().actAI();
+    expect(useGameStore.getState().players).toEqual([]);
+
+    useGameStore.getState().joinTable(table, 1000);
+    useGameStore.setState({ dealerIndex: 0 });
+    useGameStore.getState().startHand();
+    setDecideOverrideForTests((obs) => ({
+      decision: { turnToken: obs.turnToken, actorId: obs.actorId, move: { action: 'fold' } },
+      diagnosis: {
+        profileId: 'ai_0', street: 'preflop', reasonCode: 'test', samples: 0,
+        equity: null, evReference: null, elapsedMs: 0, assumptions: [], handKey: '72o', position: 'UTG',
+      },
+    }));
+    const first = useGameStore.getState().actAI();
+    const second = useGameStore.getState().actAI();
+    await first;
+    await second;
+    expect(useGameStore.getState().liveHand?.actions.filter((action) => action.kind === 'fold')).toHaveLength(1);
+    setDecideOverrideForTests(null);
+    resetNpcRuntimeForTests();
   });
 });

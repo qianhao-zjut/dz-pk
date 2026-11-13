@@ -3,7 +3,8 @@ import { estimateEquity, type EquityOk, type EquityResult } from './equity';
 import { isLegalMove } from './prices';
 import { HEURISTIC_ASSUMPTION, PREFLOP_ASSUMPTION, SHOWDOWN_ASSUMPTION, type AIProfile } from './profiles';
 import { inPosition } from './position';
-import { decidePreflop, rangeSpot, stackDepth, stackReference } from './preflop';
+import { roleAt } from '../game/positions';
+import { decidePreflop, stackDepth, stackReference } from './preflop';
 import { preflopPrice } from './preflopPrice';
 import type { AIAction, AIDecision, AIDiagnosis, AIObservation } from './types';
 
@@ -153,7 +154,8 @@ export function decide(obs: AIObservation, profile: AIProfile, options: DecideOp
   let reason: string;
   let move: AIAction = obs.legal.canCheck ? { action: 'check' } : { action: 'fold' };
   let hand = handKey(obs.holeCards[0], obs.holeCards[1]);
-  let position: string | null = rangeSpot(obs.actorSeat, obs.dealerIndex, obs.players);
+  let position: string | null = roleAt(obs.actorSeat, obs.dealerIndex, obs.players.map((player) => player.status));
+  let rangeBucket: string | null = null;
 
   const priced = obs.stage === 'preflop' ? preflopPrice(obs) : null;
   if (priced?.conservativeReason) assumptions.push(priced.conservativeReason);
@@ -164,7 +166,8 @@ export function decide(obs: AIObservation, profile: AIProfile, options: DecideOp
     reason = choice.reason;
     hand = choice.handKey;
     position = choice.position;
-    assumptions.push(PREFLOP_ASSUMPTION);
+    rangeBucket = choice.rangeBucket;
+    assumptions.push(PREFLOP_ASSUMPTION, choice.assumption);
   } else {
     const estimated = options.equityOverride ?? estimateEquity(obs, {
       samples: options.samples ?? 200,
@@ -205,6 +208,7 @@ export function decide(obs: AIObservation, profile: AIProfile, options: DecideOp
     referenceOpponentId: reference.opponentId,
     effectiveStackBb: reference.effectiveBb,
     actionContext: priced?.actionContext ?? null,
+    ...(rangeBucket ? { rangeBucket } : {}),
     fallback: reason === 'equity-fallback',
     rngDraw,
   };

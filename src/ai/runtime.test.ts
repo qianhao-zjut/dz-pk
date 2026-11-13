@@ -1,7 +1,10 @@
 import { describe, expect, it, beforeEach } from 'vitest';
+import { estimateEquityInBatches } from './equity';
 import { executeDecision, liveTurnFrom, type LiveTurn, type NpcTableActions } from './executor';
+import { buildObservation } from './observation';
 import { PROFILES } from './profiles';
-import { resetNpcRuntimeForTests, runNpcDecision } from './runtime';
+import { mulberry32 } from './rng';
+import { getNpcDiagnostics, resetNpcRuntimeForTests, runNpcDecision } from './runtime';
 import type { AIDecision } from './types';
 import type { ObservationSource, SourcePlayer } from './types';
 
@@ -234,6 +237,60 @@ describe('运行时', () => {
     expect(result).toMatchObject({ reason: 'stale' });
     expect(table.calls).toEqual([]);
     void live;
+  });
+
+  it('八名对手的翻牌和转牌分批抽样，并完成一次决策', async () => {
+    const opponents = Array.from({ length: 8 }, (_, index) => ({
+      id: `v${index}`,
+      chips: 1000,
+      currentBet: 0,
+      invested: 100,
+      status: 'active' as const,
+      canRaise: true,
+    }));
+    const measure = async (stage: 'flop' | 'turn', board: string[]) => {
+      const raw = source({ stage, board, pot: 900, currentMaxBet: 0, players: [actor(), ...opponents] });
+      const built = buildObservation(raw);
+      expect(built.ok).toBe(true);
+      if (!built.ok) return null;
+      let yields = 0;
+      const equity = await estimateEquityInBatches(
+        built.observation,
+        { samples: 200, timeBudgetMs: 40, batchSize: 8, sampleRng: mulberry32(stage === 'flop' ? 7 : 8) },
+        async () => { yields += 1; },
+        () => false,
+      );
+      expect(equity.ok).toBe(true);
+      if (!equity.ok) return null;
+      expect(equity.samples).toBeGreaterThan(0);
+      expect(equity.samples).toBeLessThanOrEqual(200);
+      expect(yields).toBeGreaterThan(0);
+      return { samples: equity.samples, elapsedMs: Math.round(equity.elapsedMs * 10) / 10, yields };
+    };
+    const flop = await measure('flop', ['2c', '7d', '9h']);
+    const turn = await measure('turn', ['2c', '7d', '9h', '4s']);
+    const raw = source({
+      stage: 'flop',
+      board: ['2c', '7d', '9h'],
+      pot: 900,
+      currentMaxBet: 0,
+      players: [actor(), ...opponents],
+    });
+    const decided = await runNpcDecision({
+      source: raw,
+      readLive: () => liveTurnFrom(raw),
+      actions: actions(),
+      profile: PROFILES.ai_0,
+      options: { samples: 200, timeBudgetMs: 40, batchSize: 40, overallTimeoutMs: 1000, sampleRng: mulberry32(11) },
+    });
+    expect(decided.ok).toBe(true);
+    const diagnosis = getNpcDiagnostics().at(-1);
+    expect(diagnosis?.samples).toBeGreaterThan(0);
+    expect(diagnosis?.reasonCode.startsWith('fallback')).toBe(false);
+    expect({ flop, turn, decisionSamples: diagnosis?.samples, reason: diagnosis?.reasonCode }).toMatchObject({
+      flop: { samples: expect.any(Number) },
+      turn: { samples: expect.any(Number) },
+    });
   });
 });
 

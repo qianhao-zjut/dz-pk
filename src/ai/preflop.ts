@@ -1,6 +1,8 @@
+import { roleAt } from '../game/positions';
 import { handKey, isPremiumHand, rangeContains } from './cards';
 import type { DefendLine } from './defendLines';
 import { inPosition } from './position';
+import { isPositionCore, positionAssumption, positionPlan, type PositionPlan } from './preflopPosition';
 import { preflopPrice } from './preflopPrice';
 import type { AIProfile, RangeSpot } from './profiles';
 import type { ThreeBetRole } from './threeBetLines';
@@ -10,7 +12,10 @@ export interface PreflopChoice {
   move: AIAction;
   reason: string;
   handKey: string | null;
-  position: RangeSpot;
+  /** 本手真实角色，不是图表分档。 */
+  position: string | null;
+  rangeBucket: string | null;
+  assumption: string;
 }
 
 export interface PreflopBranch {
@@ -99,19 +104,12 @@ export function coldCallerCount(obs: AIObservation): number {
   )).length;
 }
 
-function seatForSpot(obs: AIObservation, spot: RangeSpot): number | null {
-  for (const player of obs.players) {
-    if (rangeSpot(player.seat, obs.dealerIndex, obs.players) === spot) return player.seat;
-  }
-  return null;
-}
-
 export function voluntaryLimpCount(obs: AIObservation): number {
   if (obs.street.fullRaiseCount > 0 || obs.street.raiseCount > 0 || obs.bigBlind <= 0) return 0;
-  const bbSeat = seatForSpot(obs, 'BB');
+  const statuses = obs.players.map((player) => player.status);
   return obs.players.filter((player) => (
     player.id !== obs.actorId
-    && player.seat !== bbSeat
+    && roleAt(player.seat, obs.dealerIndex, statuses) !== 'BB'
     && player.status !== 'folded'
     && player.status !== 'sitting-out'
     && player.currentBet >= obs.bigBlind
@@ -138,12 +136,10 @@ function attemptRaise(obs: AIObservation, desired: number, shoveOk: boolean): AI
   return { action: 'raise', raiseTo: target };
 }
 
-function openerSpot(obs: AIObservation): RangeSpot | null {
+function openerPlayer(obs: AIObservation): PublicPlayer | null {
   const id = obs.street.openerId ?? obs.street.lastFullRaiserId ?? obs.street.lastRaiserId;
   if (!id) return null;
-  const opener = obs.players.find((player) => player.id === id);
-  if (!opener) return null;
-  return rangeSpot(opener.seat, obs.dealerIndex, obs.players);
+  return obs.players.find((player) => player.id === id) ?? null;
 }
 
 function openTokens(profile: AIProfile, position: RangeSpot, depth: StackDepth): readonly string[] {
@@ -184,13 +180,19 @@ function defendLine(profile: AIProfile, hero: RangeSpot, opener: RangeSpot | nul
   return profile.defend[hero]?.[opener] ?? null;
 }
 
-function facingRaise(obs: AIObservation, profile: AIProfile, key: string): PreflopBranch[] {
+function facingRaise(
+  obs: AIObservation,
+  profile: AIProfile,
+  key: string,
+  heroSpot: RangeSpot,
+  openerSpot: RangeSpot | null,
+): PreflopBranch[] {
   const chart = profile.charts;
-  const position = rangeSpot(obs.actorSeat, obs.dealerIndex, obs.players);
+  const position = heroSpot;
   const price = preflopPrice(obs);
   const depth = stackDepth(obs);
   const premium = isPremiumHand(key);
-  const line = defendLine(profile, position, openerSpot(obs));
+  const line = defendLine(profile, position, openerSpot);
   const callTokens = line ? line.call : chart.callVsRaise[position];
   const valueTokens = line ? line.value : chart.threeBet[position];
   const mixTokens = line ? line.mix : [];
@@ -263,8 +265,8 @@ function threeBetRole(obs: AIObservation): ThreeBetRole {
   return 'cold';
 }
 
-function facingThreeBet(obs: AIObservation, profile: AIProfile, key: string): PreflopBranch[] {
-  const position = rangeSpot(obs.actorSeat, obs.dealerIndex, obs.players);
+function facingThreeBet(obs: AIObservation, profile: AIProfile, key: string, heroSpot: RangeSpot): PreflopBranch[] {
+  const position = heroSpot;
   const price = preflopPrice(obs);
   const depth = stackDepth(obs);
   const premium = isPremiumHand(key);
@@ -289,11 +291,17 @@ function facingThreeBet(obs: AIObservation, profile: AIProfile, key: string): Pr
   return passive(obs, 'preflop-fold');
 }
 
-export function preflopBranches(obs: AIObservation, profile: AIProfile): PreflopBranch[] {
+/** 用显式图表来源计算分支。不改写真实座位、加注者和价格。 */
+export function chartBranches(
+  obs: AIObservation,
+  profile: AIProfile,
+  heroSpot: RangeSpot,
+  openerSpot: RangeSpot | null,
+): PreflopBranch[] {
   const key = handKey(obs.holeCards[0], obs.holeCards[1]);
   if (!key) return passive(obs, 'preflop-fold');
 
-  const position = rangeSpot(obs.actorSeat, obs.dealerIndex, obs.players);
+  const position = heroSpot;
   const chart = profile.charts;
   const price = preflopPrice(obs);
   const depth = stackDepth(obs);
@@ -316,8 +324,8 @@ export function preflopBranches(obs: AIObservation, profile: AIProfile): Preflop
     return passive(obs, 'preflop-open-fold');
   }
 
-  if (fullRaises === 1) return facingRaise(obs, profile, key);
-  if (fullRaises === 2) return facingThreeBet(obs, profile, key);
+  if (fullRaises === 1) return facingRaise(obs, profile, key, heroSpot, openerSpot);
+  if (fullRaises === 2) return facingThreeBet(obs, profile, key, heroSpot);
 
   if (rangeContains(chart.fourBet[position], key) && allowed) {
     const raised = attemptRaise(obs, obs.currentMaxBet * reraiseMultiple(obs, profile), premium);
@@ -329,6 +337,78 @@ export function preflopBranches(obs: AIObservation, profile: AIProfile): Preflop
   return passive(obs, 'preflop-fold');
 }
 
+function scaleBranches(branches: readonly PreflopBranch[], weight: number): PreflopBranch[] {
+  return branches.map((branch) => ({ ...branch, weight: branch.weight * weight }));
+}
+
+function sameMove(left: AIAction, right: AIAction): boolean {
+  if (left.action !== right.action) return false;
+  if (left.action === 'raise' && right.action === 'raise') return left.raiseTo === right.raiseTo;
+  return true;
+}
+
+function mergeBranches(parts: readonly PreflopBranch[]): PreflopBranch[] {
+  const merged: PreflopBranch[] = [];
+  for (const branch of parts) {
+    if (branch.weight <= 0) continue;
+    const found = merged.find((item) => item.reason === branch.reason && sameMove(item.move, branch.move));
+    if (found) found.weight += branch.weight;
+    else merged.push({ ...branch, move: { ...branch.move } });
+  }
+  return merged;
+}
+
+function applyKeep(branches: readonly PreflopBranch[], obs: AIObservation, keep: number): PreflopBranch[] {
+  let released = 0;
+  const next: PreflopBranch[] = [];
+  for (const branch of branches) {
+    const passiveMove = branch.move.action === 'fold' || branch.move.action === 'check';
+    if (passiveMove) {
+      next.push({ ...branch, move: { ...branch.move } });
+      continue;
+    }
+    const kept = branch.weight * keep;
+    released += branch.weight - kept;
+    if (kept > 0) next.push({ ...branch, weight: kept, move: { ...branch.move } });
+  }
+  if (released > 0) {
+    const move: AIAction = obs.legal.canCheck ? { action: 'check' } : { action: 'fold' };
+    const reason = move.action === 'check' ? 'preflop-check' : 'preflop-fold';
+    const existing = next.find((branch) => branch.move.action === move.action);
+    if (existing) existing.weight += released;
+    else next.push({ weight: released, move, reason });
+  }
+  return next.filter((branch) => branch.weight > 0);
+}
+
+export function preflopBranches(obs: AIObservation, profile: AIProfile): PreflopBranch[] {
+  const key = handKey(obs.holeCards[0], obs.holeCards[1]);
+  if (!key) return passive(obs, 'preflop-fold');
+  const statuses = obs.players.map((player) => player.status);
+  const hero = positionPlan(obs.actorSeat, obs.dealerIndex, statuses);
+  if (hero.sources.length === 0) return passive(obs, 'preflop-fold');
+  const opener = openerPlayer(obs);
+  const openerPlan = opener ? positionPlan(opener.seat, obs.dealerIndex, statuses) : null;
+  const parts: PreflopBranch[] = [];
+  if (obs.street.fullRaiseCount === 1 && openerPlan && openerPlan.sources.length > 0) {
+    for (const heroSource of hero.sources) {
+      for (const openerSource of openerPlan.sources) {
+        parts.push(...scaleBranches(
+          chartBranches(obs, profile, heroSource.spot, openerSource.spot),
+          heroSource.weight * openerSource.weight,
+        ));
+      }
+    }
+  } else {
+    for (const heroSource of hero.sources) {
+      parts.push(...scaleBranches(chartBranches(obs, profile, heroSource.spot, null), heroSource.weight));
+    }
+  }
+  let merged = mergeBranches(parts);
+  if (hero.keep < 1 && !isPositionCore(key)) merged = applyKeep(merged, obs, hero.keep);
+  return merged.length > 0 ? merged : passive(obs, 'preflop-fold');
+}
+
 export function branchWeights(branches: readonly PreflopBranch[]): { fold: number; check: number; call: number; raise: number } {
   const weights = { fold: 0, check: 0, call: 0, raise: 0 };
   for (const branch of branches) weights[branch.move.action] += branch.weight;
@@ -337,7 +417,14 @@ export function branchWeights(branches: readonly PreflopBranch[]): { fold: numbe
 
 export function decidePreflop(obs: AIObservation, profile: AIProfile, rng: () => number): PreflopChoice {
   const key = handKey(obs.holeCards[0], obs.holeCards[1]);
-  const position = rangeSpot(obs.actorSeat, obs.dealerIndex, obs.players);
+  const plan: PositionPlan = positionPlan(obs.actorSeat, obs.dealerIndex, obs.players.map((player) => player.status));
   const picked = pickBranch(preflopBranches(obs, profile), rng);
-  return { move: picked.move, reason: picked.reason, handKey: key, position };
+  return {
+    move: picked.move,
+    reason: picked.reason,
+    handKey: key,
+    position: plan.role,
+    rangeBucket: plan.bucket,
+    assumption: positionAssumption(plan),
+  };
 }

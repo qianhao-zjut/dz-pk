@@ -118,6 +118,7 @@ function contextFor(observation: AIObservation, diagnosis: AIDiagnosis): NpcActi
     referenceOpponentId: diagnosis.referenceOpponentId ?? null,
     effectiveStackBb: diagnosis.effectiveStackBb ?? null,
     actionContext: diagnosis.actionContext ?? null,
+    ...(diagnosis.rangeBucket ? { rangeBucket: diagnosis.rangeBucket } : {}),
     samples: diagnosis.samples,
     equity: diagnosis.equity,
     evReference: diagnosis.evReference,
@@ -185,12 +186,17 @@ async function compute(args: RunNpcArgs, observation: import('./types').AIObserv
   if (job.aborted || epochAtStart !== epoch) return null;
   if (observation.stage === 'preflop') return decide(observation, args.profile, args.options);
   const current = getNpcLimits();
+  const opponents = observation.players.filter((player) => (
+    player.id !== observation.actorId && (player.status === 'active' || player.status === 'all-in')
+  )).length;
+  const requestedBatch = args.options?.batchSize ?? current.batchSize;
+  const batchSize = opponents >= 7 ? Math.min(requestedBatch, 8) : opponents >= 5 ? Math.min(requestedBatch, 16) : requestedBatch;
   const eq = await estimateEquityInBatches(
     observation,
     {
       samples: args.options?.samples ?? current.samples,
       timeBudgetMs: args.options?.timeBudgetMs ?? current.timeBudgetMs,
-      batchSize: args.options?.batchSize ?? current.batchSize,
+      batchSize,
       sampleRng: args.options?.sampleRng,
       now: args.options?.now,
       callCost: observation.callCost,

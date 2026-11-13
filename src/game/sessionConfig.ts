@@ -4,6 +4,7 @@ import type { ProfileId } from '../ai/types';
 export type ScenarioId = 'standard' | 'short' | 'deep';
 export type OpponentMix = 'mixed' | 'loose' | 'tight';
 export type BuyInDepth = 40 | 100 | 200;
+export type TableSize = 4 | 6 | 9;
 
 export interface TableConfig {
   id: string;
@@ -17,6 +18,8 @@ export interface TableConfig {
   npcs?: NpcSeat[];
   /** 新选择写入。旧配置缺这个字段时保持缺失。 */
   npcConfigVersion?: string;
+  /** 新选择写入。旧配置缺这个字段时不补。 */
+  tableSize?: TableSize;
 }
 
 export interface LevelOption {
@@ -45,6 +48,7 @@ export interface SessionSnapshot {
   opponents: OpponentMix;
   npcs: NpcSeat[];
   npcConfigVersion?: string;
+  tableSize?: TableSize;
 }
 
 export const LEVELS: LevelOption[] = [
@@ -77,9 +81,28 @@ const TIGHT: NpcSeat[] = [
   { id: 'ai_2', name: '岩石玩家', profileId: 'ai_2', style: '保守' },
 ];
 
-export function npcsFor(mix: OpponentMix): NpcSeat[] {
-  const source = mix === 'loose' ? LOOSE : mix === 'tight' ? TIGHT : MIXED;
-  return source.map((seat) => ({ ...seat }));
+export function isTableSize(value: unknown): value is TableSize {
+  return value === 4 || value === 6 || value === 9;
+}
+
+export function npcCountFor(tableSize: TableSize = 4): number {
+  return tableSize - 1;
+}
+
+export function npcsFor(mix: OpponentMix, tableSize: TableSize = 4): NpcSeat[] {
+  const cycle = mix === 'loose' ? LOOSE : mix === 'tight' ? TIGHT : MIXED;
+  const seen = new Map<string, number>();
+  return Array.from({ length: npcCountFor(tableSize) }, (_, index) => {
+    const template = cycle[index % cycle.length];
+    const used = seen.get(template.name) ?? 0;
+    seen.set(template.name, used + 1);
+    return {
+      id: `ai_${index}`,
+      name: used === 0 ? template.name : `${template.name}${used + 1}`,
+      profileId: template.profileId,
+      style: template.style,
+    };
+  });
 }
 
 export function resolveBuyIn(bigBlind: number, depth: number): number {
@@ -112,16 +135,27 @@ export function sessionFromTable(table: TableConfig): SessionSnapshot {
     buyInBb,
     buyIn: table.buyIn,
     opponents,
-    npcs: table.npcs ? table.npcs.map((seat) => ({ ...seat })) : npcsFor(opponents),
+    npcs: table.npcs ? table.npcs.map((seat) => ({ ...seat })) : npcsFor(opponents, table.tableSize ?? 4),
   };
   if (typeof table.npcConfigVersion === 'string') session.npcConfigVersion = table.npcConfigVersion;
+  if (isTableSize(table.tableSize)) session.tableSize = table.tableSize;
   return session;
 }
 
-export function mixSummary(mix: OpponentMix): string {
-  if (mix === 'loose') return '当前组合：三名松凶。';
-  if (mix === 'tight') return '当前组合：三名保守。';
-  return '当前组合：稳健、松凶、松跟。';
+export function mixSummary(mix: OpponentMix, tableSize: TableSize = 4): string {
+  if (tableSize === 4 && mix === 'loose') return '当前组合：三名松凶。';
+  if (tableSize === 4 && mix === 'tight') return '当前组合：三名保守。';
+  if (tableSize === 4) return '当前组合：稳健、松凶、松跟。';
+  const seats = npcsFor(mix, tableSize);
+  const counts = new Map<string, number>();
+  for (const seat of seats) counts.set(seat.style, (counts.get(seat.style) ?? 0) + 1);
+  const parts = [...counts.entries()].map(([style, count]) => `${count} 名${style}`);
+  return `当前组合：${parts.join('、')}。`;
+}
+
+export function tableSizeLabel(tableSize: number | undefined): string | null {
+  if (tableSize === 4 || tableSize === 6 || tableSize === 9) return `${tableSize} 人桌`;
+  return null;
 }
 
 export function tableFromSelection(
@@ -129,6 +163,7 @@ export function tableFromSelection(
   scenarioId: ScenarioId,
   buyInBb: BuyInDepth,
   opponents: OpponentMix,
+  tableSize: TableSize = 4,
 ): TableConfig {
   const buyIn = resolveBuyIn(level.bigBlind, buyInBb);
   return {
@@ -140,7 +175,8 @@ export function tableFromSelection(
     scenarioId,
     buyInBb,
     opponents,
-    npcs: npcsFor(opponents),
+    npcs: npcsFor(opponents, tableSize),
     npcConfigVersion: RANGE_CONFIG_VERSION,
+    tableSize,
   };
 }

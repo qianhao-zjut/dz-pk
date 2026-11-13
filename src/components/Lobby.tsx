@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useBankrollStore } from '../store/bankrollStore';
 import { useHandHistoryStore } from '../store/handHistoryStore';
 import { retryFailedHandReviews, useHandReviewSyncStatus } from '../store/handReviewSync';
-import { bankrollAdvice, LEVELS, mixSummary, SCENARIOS, tableFromSelection, type BuyInDepth, type OpponentMix, type ScenarioId, type TableConfig } from '../game/sessionConfig';
+import { bankrollAdvice, LEVELS, mixSummary, SCENARIOS, tableFromSelection, type BuyInDepth, type OpponentMix, type ScenarioId, type TableConfig, type TableSize } from '../game/sessionConfig';
 import { HandReview } from './HandReview';
 import { Coins, AlertTriangle, Play, RotateCcw, Settings } from 'lucide-react';
 
@@ -23,6 +23,7 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
   const [scenarioId, setScenarioId] = useState<ScenarioId>('standard');
   const [depth, setDepth] = useState<BuyInDepth>(100);
   const [opponents, setOpponents] = useState<OpponentMix>('mixed');
+  const [tableSize, setTableSize] = useState<TableSize>(4);
   const [reviewId, setReviewId] = useState<string | null>(null);
   const hands = useHandHistoryStore((state) => state.hands);
   const autoOpenReview = useHandHistoryStore((state) => state.autoOpenReview);
@@ -50,7 +51,7 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
   const handleJoinClick = (levelId: string) => {
     const level = LEVELS.find((item) => item.id === levelId);
     if (!level) return;
-    const table = tableFromSelection(level, scenarioId, depth, opponents);
+    const table = tableFromSelection(level, scenarioId, depth, opponents, tableSize);
     const advice = bankrollAdvice(balance, table.buyIn);
     if (!advice.canSit || advice.advice) {
       setWarning({ show: true, message: advice.advice ?? '现在不能入座。', table: advice.canSit ? table : undefined });
@@ -124,9 +125,14 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
                 {item === 'mixed' ? '混合对手' : item === 'loose' ? '偏松对手' : '偏紧对手'}
               </button>
             ))}
+            {([4, 6, 9] as TableSize[]).map((size) => (
+              <button key={size} onClick={() => setTableSize(size)} className={`px-3 py-1 rounded-lg ${tableSize === size ? 'bg-indigo-600' : 'bg-gray-700'}`}>
+                {size} 人桌
+              </button>
+            ))}
           </div>
           <p className="text-xs text-gray-400">深度是开局推荐值，打过几手后有效筹码会变化。改变这里的选项不会扣钱。</p>
-          <p className="text-xs text-gray-300">{mixSummary(opponents)}</p>
+          <p className="text-xs text-gray-300">{mixSummary(opponents, tableSize)}</p>
           <label className="flex items-center gap-2 text-sm text-gray-300">
             <input type="checkbox" checked={autoOpenReview} onChange={(event) => setAutoOpenReview(event.target.checked)} />
             每手结束自动展开回顾
@@ -135,7 +141,7 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {LEVELS.map((level) => {
-            const table = tableFromSelection(level, scenarioId, depth, opponents);
+            const table = tableFromSelection(level, scenarioId, depth, opponents, tableSize);
             const times = table.buyIn > 0 ? balance / table.buyIn : 0;
             return (
             <div key={level.id} className="bg-gray-800 rounded-2xl p-6 border border-gray-700 hover:border-blue-500 transition-all shadow-lg flex flex-col">
@@ -144,6 +150,10 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
                 <div className="flex justify-between">
                   <span>盲注 (SB/BB):</span>
                   <span className="font-mono">${level.smallBlind}/${level.bigBlind}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>牌桌:</span>
+                  <span className="font-mono">{table.tableSize} 人桌 · {table.npcs?.length ?? 0} 名对手</span>
                 </div>
                 <div className="flex justify-between">
                   <span>本次买入:</span>
@@ -189,7 +199,7 @@ export const Lobby: React.FC<{ onJoinTable: (table: TableConfig) => void }> = ({
           <div className="space-y-2">
             {[...hands].reverse().map((hand) => (
               <button key={hand.id} onClick={() => setReviewId(hand.id)} className="w-full text-left px-3 py-2 rounded-lg bg-gray-900 hover:bg-gray-700 text-sm">
-                第 {hand.handNumber} 手 · {hand.config.levelName} · {hand.config.buyInBb}bb · {hand.endKind === 'folds' ? '弃牌结束' : '摊牌'}
+                第 {hand.handNumber} 手 · {hand.config.tableSize ?? hand.seats.length} 人桌 · {hand.config.levelName} · {hand.config.buyInBb}bb · {hand.endKind === 'folds' ? '弃牌结束' : '摊牌'}
               </button>
             ))}
           </div>

@@ -8,7 +8,7 @@ import type { PublicAction } from '../ai/types';
 import { isBettingStage } from '../ai/types';
 import { isPayableChipAmount } from '../game/chipAmount';
 import { handId, type LiveHand, type PotPayout, type RecordedAction } from '../game/handRecord';
-import { seatRole } from '../game/positions';
+import { blindSeats, firstToAct, nextButtonIndex, participantOrder, roleAt } from '../game/positions';
 import { sessionFromTable } from '../game/sessionConfig';
 import { raiseVerb } from '../game/shortcuts';
 import type { Card } from '../utils/poker';
@@ -244,18 +244,20 @@ export const useGameStore = create<GameState>((set, get) => {
       };
     });
 
-    // 发牌 (每人2张)
-    for (let i = 0; i < 2; i++) {
-      updatedPlayers.forEach(p => {
-        if (p.status === 'active') {
-          p.cards.push(deck.pop()!);
-        }
+    // 发牌只给本手会参与的人。坐出不拿牌、不交盲。
+    const dealtStatuses = updatedPlayers.map((player) => player.status);
+    const ordered = participantOrder(dealerIndex, dealtStatuses);
+    if (ordered.length < 2) return;
+    const blinds = blindSeats(dealerIndex, dealtStatuses);
+    if (!blinds) return;
+    const button = blinds.button;
+    const sbIndex = blinds.sb;
+    const bbIndex = blinds.bb;
+    for (let round = 0; round < 2; round += 1) {
+      updatedPlayers.forEach((player) => {
+        if (player.status === 'active') player.cards.push(deck.pop()!);
       });
     }
-
-    // 盲注逻辑 (简化处理，假设4人都在)
-    const sbIndex = (dealerIndex + 1) % updatedPlayers.length;
-    const bbIndex = (dealerIndex + 2) % updatedPlayers.length;
     const chipsBefore = updatedPlayers.map((player) => player.chips);
     let pot = 0;
 
@@ -277,13 +279,8 @@ export const useGameStore = create<GameState>((set, get) => {
     postBlind(bbIndex, bbAmount);
     pot += bbAmount;
 
-    // 枪口下(UTG)先行动；已经全下的盲注位不再轮到
-    let utgIndex = (dealerIndex + 3) % updatedPlayers.length;
-    let seek = 0;
-    while (updatedPlayers[utgIndex].status !== 'active' && seek < updatedPlayers.length) {
-      utgIndex = (utgIndex + 1) % updatedPlayers.length;
-      seek++;
-    }
+    const actedStatuses = updatedPlayers.map((player) => player.status);
+    const actor = firstToAct(button, actedStatuses, 'preflop');
 
     // 日志素材：带入筹码（盲注已扣，故加回 currentBet）、人类底牌
     const human = updatedPlayers.find(p => p.id === 'human');
@@ -312,13 +309,14 @@ export const useGameStore = create<GameState>((set, get) => {
       handNumber: handNumber + 1,
       startedAt: new Date().toISOString(),
       config: sessionFromTable(table),
-      dealerIndex,
+      dealerIndex: button,
+      participantSeats: [...ordered],
       seats: updatedPlayers.map((player, seat) => ({
         id: player.id,
         name: player.name,
         profileId: player.profileId ?? null,
         style: player.profileId ? profileFor(player.profileId).label : null,
-        role: seatRole(seat, dealerIndex, updatedPlayers.length),
+        role: roleAt(seat, button, dealtStatuses),
         chipsBefore: chipsBefore[seat],
         holeCards: [...player.cards],
       })),
@@ -334,12 +332,13 @@ export const useGameStore = create<GameState>((set, get) => {
       board: [],
       players: updatedPlayers,
       pot,
-      handDealerIndex: dealerIndex,
+      dealerIndex: button,
+      handDealerIndex: button,
       liveHand,
       // 要跟的注是实际盲注里较大的那个；短码不足一个大盲时不能把最高注抬到大盲
       currentMaxBet: Math.max(sbAmount, bbAmount),
       lastRaiseSize: table.bigBlind,
-      currentPlayerIndex: utgIndex,
+      currentPlayerIndex: actor ?? bbIndex,
       handNumber: handNumber + 1,
       sessionId: activeSession,
       streetActions: [
@@ -347,13 +346,14 @@ export const useGameStore = create<GameState>((set, get) => {
         { actorId: updatedPlayers[bbIndex].id, stage: 'preflop', kind: 'post', to: bbAmount },
       ],
       gameLog: [
-        `--- 第 ${handNumber + 1} 手牌开始 (庄家: ${updatedPlayers[dealerIndex].name}) ---`,
+        `--- 第 ${handNumber + 1} 手牌开始 (庄家: ${updatedPlayers[button].name}) ---`,
         ...rebuyLogs,
         `${updatedPlayers[sbIndex].name} 下小盲 $${sbAmount}, ${updatedPlayers[bbIndex].name} 下大盲 $${bbAmount}`,
         `带入筹码: ${stacksInfo}`,
         ...(human && (human.status === 'active' || human.status === 'all-in') ? [`你的底牌: ${human.cards.join(' ')}`] : [])
       ]
     });
+    if (actor == null) get().advanceTurn();
   },
 
   playerFold: (npc) => {
@@ -592,13 +592,8 @@ export const useGameStore = create<GameState>((set, get) => {
       newStage = 'showdown';
     }
 
-    // 确定下注轮的第一个行动者（小盲位开始）
-    let nextIdx = (dealerIndex + 1) % players.length;
-    let loopCount = 0;
-    while (newPlayers[nextIdx].status !== 'active' && loopCount < players.length) {
-      nextIdx = (nextIdx + 1) % players.length;
-      loopCount++;
-    }
+    const statuses = newPlayers.map((player) => player.status);
+    const nextIdx = firstToAct(dealerIndex, statuses, 'postflop') ?? (dealerIndex + 1) % newPlayers.length;
 
     commit({ 
       stage: newStage, 
@@ -646,6 +641,7 @@ export const useGameStore = create<GameState>((set, get) => {
               const before = live.seats.find((seat) => seat.id === player.id)?.chipsBefore ?? player.chips;
               return { id: player.id, chips: player.chips, net: player.chips - before };
             }),
+            ...(live.participantSeats ? { participantSeats: [...live.participantSeats] } : {}),
             endKind: contenders.length <= 1 ? 'folds' : 'showdown',
           });
         } catch {
@@ -658,7 +654,7 @@ export const useGameStore = create<GameState>((set, get) => {
         pot: potLeft,
         stage: 'showdown',
         liveHand: null,
-        dealerIndex: (dealerIndex + 1) % players.length
+        dealerIndex: nextButtonIndex(dealerIndex, newPlayers)
       });
     };
 

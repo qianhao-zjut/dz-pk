@@ -103,6 +103,8 @@ export interface AIDiagnosis {
   effectiveStackBb?: number | null;
   /** unopened / facing-open / facing-3bet / facing-4bet-plus / unknown */
   actionContext?: string | null;
+  /** 翻前图表分档。真实位置仍在 position。旧档案可以缺这个字段。 */
+  rangeBucket?: string | null;
   fallback?: boolean;
   rngDraw?: number | null;
 }

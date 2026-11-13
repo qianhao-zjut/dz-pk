@@ -12,7 +12,7 @@ import { stackText } from './positions';
 import { analyzeDraws } from './draws';
 import { quoteCall, type QuotePlayer } from './priceQuote';
 import { reviewAutoOpenDecision } from './reviewGate';
-import { bankrollAdvice, npcsFor, resolveBuyIn, sessionFromTable, tableFromSelection, LEVELS } from './sessionConfig';
+import { bankrollAdvice, mixSummary, npcsFor, resolveBuyIn, sessionFromTable, tableFromSelection, LEVELS } from './sessionConfig';
 import { RANGE_CONFIG_VERSION } from '../ai/profiles';
 import { actionShortcuts, raiseVerb } from './shortcuts';
 import { resetHandHistoryForTests, useHandHistoryStore } from '../store/handHistoryStore';
@@ -42,6 +42,9 @@ describe('界面文案', () => {
     expect(lobby).toContain('每手结束自动展开回顾');
     expect(lobby).not.toContain('破产风险极高');
     expect(lobby).toContain('混合对手');
+    expect(lobby).toContain('4 人桌');
+    expect(lobby).toContain('6 人桌');
+    expect(lobby).toContain('9 人桌');
     expect(lobby).toContain('当前组合：稳健、松凶、松跟。');
   });
 });
@@ -164,6 +167,35 @@ describe('买入和对手', () => {
     expect(legacy.npcConfigVersion).toBeUndefined();
     expect(legacy.npcs.every((seat) => seat.profileId === 'ai_2')).toBe(true);
     expect(sessionFromTable({ ...selected, npcConfigVersion: 'frozen-old' }).npcConfigVersion).toBe('frozen-old');
+    expect(selected.tableSize).toBe(4);
+    expect(sessionFromTable(selected).tableSize).toBe(4);
+    expect('tableSize' in legacy).toBe(false);
+    const oldList = npcsFor('tight');
+    const kept = sessionFromTable({ id: 'old', name: '旧桌', smallBlind: 1, bigBlind: 2, buyIn: 200, npcs: oldList });
+    expect(kept.npcs).toEqual(oldList);
+    expect(kept.tableSize).toBeUndefined();
+
+    for (const size of [4, 6, 9] as const) {
+      for (const mix of ['mixed', 'loose', 'tight'] as const) {
+        const seats = npcsFor(mix, size);
+        expect(seats).toHaveLength(size - 1);
+        expect(new Set(seats.map((seat) => seat.id)).size).toBe(seats.length);
+        expect(new Set(seats.map((seat) => seat.name)).size).toBe(seats.length);
+        expect(seats.every((seat) => ['ai_0', 'ai_1', 'ai_2', 'loose_passive'].includes(seat.profileId))).toBe(true);
+      }
+    }
+    expect(npcsFor('mixed', 6).map((seat) => seat.style)).toEqual(['稳健', '松凶', '松跟', '稳健', '松凶']);
+    expect(npcsFor('mixed', 9).map((seat) => seat.style)).toEqual(['稳健', '松凶', '松跟', '稳健', '松凶', '松跟', '稳健', '松凶']);
+    expect(npcsFor('mixed')).toEqual([
+      { id: 'ai_0', name: '德州老手', profileId: 'ai_0', style: '稳健' },
+      { id: 'ai_1', name: '激进小伙', profileId: 'ai_1', style: '松凶' },
+      { id: 'ai_2', name: '松跟玩家', profileId: 'loose_passive', style: '松跟' },
+    ]);
+    expect(mixSummary('mixed', 6)).toBe('当前组合：2 名稳健、2 名松凶、1 名松跟。');
+    expect(mixSummary('loose', 9)).toContain('8 名松凶');
+    const six = tableFromSelection(LEVELS[0], 'standard', 100, 'mixed', 6);
+    expect(six.npcs).toHaveLength(5);
+    expect(six.buyIn).toBe(200);
   });
 
   it('资金提示用可买入次数，不把 30 个买入写成破产概率', () => {

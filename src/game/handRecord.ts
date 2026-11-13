@@ -1,7 +1,7 @@
 import type { NpcActionContext } from '../ai/npcContext';
 import type { BettingStage } from '../ai/types';
 import type { SessionSnapshot } from './sessionConfig';
-import type { SeatRole } from './positions';
+import { roleLabel, type SeatRole } from './positions';
 
 export const HAND_RECORD_VERSION = 1;
 
@@ -10,7 +10,7 @@ export interface RecordedSeat {
   name: string;
   profileId: string | null;
   style: string | null;
-  role: SeatRole;
+  role: SeatRole | null;
   chipsBefore: number;
   holeCards: string[];
 }
@@ -60,6 +60,8 @@ export interface CompletedHand {
   payouts: PotPayout[];
   results: HandResultSeat[];
   endKind: 'folds' | 'showdown';
+  /** 本手开局参与座位，从按钮起。旧档案可以缺。 */
+  participantSeats?: number[];
 }
 
 export interface LiveHand {
@@ -68,6 +70,7 @@ export interface LiveHand {
   startedAt: string;
   config: SessionSnapshot;
   dealerIndex: number;
+  participantSeats?: number[];
   seats: RecordedSeat[];
   actions: RecordedAction[];
 }
@@ -130,7 +133,7 @@ export function actionContextText(code: string | null | undefined): string | nul
   return ACTION_CONTEXT[code] ?? '加注信息不足';
 }
 
-export function practiceTip(role: SeatRole): string {
-  const where = role === 'BB' ? '大盲' : role === 'BTN' ? '按钮' : role === 'SB' ? '小盲' : '枪口';
+export function practiceTip(role: SeatRole | null): string {
+  const where = roleLabel(role);
   return `${where}的通用提示：跟注门槛看的是补齐金额占跟注后可争夺底池的比例，不是对手那一枪占下注前底池的比例。这不代表某次弃牌一定错。`;
 }
