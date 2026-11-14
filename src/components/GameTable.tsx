@@ -37,7 +37,7 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
   
   const deductFunds = useBankrollStore(state => state.deductFunds);
   const addFunds = useBankrollStore(state => state.addFunds);
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const logBoxRef = useRef<HTMLDivElement>(null);
 
   // Modal 状态（替代原生 confirm/alert）
   const [showRebuyModal, setShowRebuyModal] = useState(false);
@@ -63,9 +63,10 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
     if (!isHumanTurnNow) setShowRaisePanel(false);
   }, [isHumanTurnNow]);
 
-  // Auto-scroll game log
+  // 只滚动日志自己的容器，避免把整页从牌桌拉走
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const box = logBoxRef.current;
+    if (box) box.scrollTop = box.scrollHeight;
   }, [gameLog]);
 
   useEffect(() => {
@@ -224,12 +225,12 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
   };
 
   return (
-    <div className="flex flex-col lg:flex-row min-h-screen lg:h-screen bg-gray-900 text-white font-sans p-2 sm:p-4 gap-2 sm:gap-4 overflow-y-auto lg:overflow-hidden">
-      {/* 左侧/中央：主要牌桌区域 */}
-      <div className="flex-1 flex flex-col relative bg-gray-800 rounded-2xl sm:rounded-3xl border-4 sm:border-8 border-gray-700 shadow-2xl min-h-[42rem] lg:min-h-0">
+    <div className="flex flex-col lg:flex-row min-h-screen lg:h-dvh bg-gray-900 text-white font-sans p-2 sm:p-4 gap-2 sm:gap-4 overflow-y-auto lg:overflow-hidden">
+      {/* 左侧/中央：主要牌桌区域。桌面高度固定时，牌桌让出底部操作区。 */}
+      <div className="flex-1 flex flex-col relative bg-gray-800 rounded-2xl sm:rounded-3xl border-4 sm:border-8 border-gray-700 shadow-2xl min-h-[36rem] lg:min-h-0 lg:overflow-hidden">
         
         {/* 顶部：控制条 */}
-        <div className="relative z-10 w-full p-3 sm:p-4 flex flex-wrap justify-between items-center gap-2">
+        <div className="relative z-30 w-full shrink-0 p-2 sm:p-3 flex flex-wrap justify-between items-center gap-2">
           <div className="bg-black/50 px-4 py-2 rounded-full text-sm font-bold text-gray-300">
             {table.name} ({table.smallBlind}/{table.bigBlind}){sizeLabel ? ` · ${sizeLabel}` : ''}{effective != null ? ` · 有效 ${stackText(effective, table.bigBlind)}` : ''}
           </div>
@@ -255,7 +256,7 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
         />
 
         {/* 底部操作面板 */}
-        <div className="bg-gray-900 p-2 sm:p-4 border-t border-gray-700 flex justify-center items-center flex-shrink-0 min-h-[5rem] sm:min-h-[6rem] z-30">
+        <div className="bg-gray-900 p-2 border-t border-gray-700 flex justify-center items-center shrink-0 z-30 max-h-[46dvh] overflow-y-auto">
           {stage === 'idle' || stage === 'showdown' ? (
             <div className="flex flex-wrap justify-center gap-2">
               <button
@@ -280,7 +281,7 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
             </div>
           ) : showRaisePanel && human ? (
             /* 加注尺寸面板：滑杆 + 快捷尺寸 + 确认/取消 */
-            <div className="flex flex-col items-center gap-2 w-full max-w-md px-2">
+            <div className="flex flex-col items-center gap-1.5 w-full max-w-md px-2">
               <div className="flex items-baseline gap-2">
                 <span className="text-gray-300 text-sm">{verb}到</span>
                 <span className="text-yellow-400 font-bold text-2xl">${raiseText === '' ? '—' : raiseText}</span>
@@ -333,7 +334,7 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
               />
               {raiseError && <p className="text-red-400 text-xs text-center">{raiseError}</p>}
 
-              <div className="flex gap-3 mt-1">
+              <div className="sticky bottom-0 flex gap-3 bg-gray-900 py-1">
                 <button
                   onClick={() => {
                     setShowRaisePanel(false);
@@ -409,20 +410,19 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
       </div>
 
       {/* 右侧：教学辅助与日志面板 */}
-      <div className="w-full lg:w-80 flex flex-col gap-4">
+      <div className="w-full lg:w-80 lg:min-h-0 flex flex-col gap-4">
         {/* 日志面板 */}
-        <div className="flex-1 bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden flex flex-col shadow-xl">
+        <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden flex flex-col shadow-xl h-48 lg:h-auto lg:flex-1 lg:min-h-0">
           <div className="bg-gray-900 p-3 border-b border-gray-700 font-bold text-gray-300">
             📝 对局日志
           </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-2 text-sm text-gray-400 font-mono">
+          <div ref={logBoxRef} className="flex-1 overflow-y-auto p-4 space-y-2 text-sm text-gray-400 font-mono">
             {gameLog.length === 0 && <div className="text-center text-gray-600 mt-4">等待游戏开始...</div>}
             {gameLog.map((log, i) => (
               <div key={i} className={`${log.includes('---') ? 'text-blue-400 my-4' : ''} ${log.includes('赢') ? 'text-yellow-400 font-bold' : ''}`}>
                 {log}
               </div>
             ))}
-            <div ref={logEndRef} />
           </div>
         </div>
 
