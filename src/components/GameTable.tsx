@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { useBankrollStore } from '../store/bankrollStore';
 import { useHandHistoryStore } from '../store/handHistoryStore';
-import { AlertTriangle, Coins } from 'lucide-react';
+import { AlertTriangle, Coins, GraduationCap, LogOut, PanelRightOpen, ScrollText, Spade, Volume2, VolumeX, X } from 'lucide-react';
 import { TableFelt } from './TableFelt';
 import { TeachingPanel } from './TeachingPanel';
 import { HandReview } from './HandReview';
@@ -34,6 +34,9 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
     handNumber,
   });
   const reviewId = manualReviewId ?? (autoDecision === 'open' ? pendingAutoOpenId : null);
+  const settledHand = stage === 'showdown'
+    ? [...hands].reverse().find((hand) => hand.sessionId === sessionId && hand.handNumber === handNumber) ?? null
+    : null;
   
   const deductFunds = useBankrollStore(state => state.deductFunds);
   const addFunds = useBankrollStore(state => state.addFunds);
@@ -50,6 +53,24 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
   const [raiseError, setRaiseError] = useState<string | null>(null);
 
   const [soundOn, setSoundOn] = useState(() => readSoundEnabled());
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.matchMedia('(min-width: 1024px)').matches);
+  const [sideTab, setSideTab] = useState<'log' | 'teach'>('log');
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 1024px)');
+    const syncSidebar = (event: MediaQueryListEvent) => setSidebarOpen(event.matches);
+    media.addEventListener('change', syncSidebar);
+    return () => media.removeEventListener('change', syncSidebar);
+  }, []);
+  useEffect(() => {
+    if (!sidebarOpen || !window.matchMedia('(max-width: 1023px)').matches) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setSidebarOpen(false); };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [sidebarOpen]);
+  const openSidebar = (tab: 'log' | 'teach') => {
+    setSideTab(tab);
+    setSidebarOpen(true);
+  };
   const toggleSound = () => {
     const next = !soundOn;
     setSoundOn(next);
@@ -57,11 +78,8 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
     if (next) primeActionAudio();
   };
 
-  // 轮到别人行动时自动收起加注面板
+  // 非本人回合即使面板状态尚未清理，也不展示加注控件。
   const isHumanTurnNow = stage !== 'idle' && stage !== 'showdown' && players[currentPlayerIndex]?.id === 'human';
-  useEffect(() => {
-    if (!isHumanTurnNow) setShowRaisePanel(false);
-  }, [isHumanTurnNow]);
 
   // 只滚动日志自己的容器，避免把整页从牌桌拉走
   useEffect(() => {
@@ -225,24 +243,34 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
   };
 
   return (
-    <div className="flex flex-col lg:flex-row min-h-screen lg:h-dvh bg-gray-900 text-white font-sans p-2 sm:p-4 gap-2 sm:gap-4 overflow-y-auto lg:overflow-hidden">
-      {/* 左侧/中央：主要牌桌区域。桌面高度固定时，牌桌让出底部操作区。 */}
-      <div className="flex-1 flex flex-col relative bg-gray-800 rounded-2xl sm:rounded-3xl border-4 sm:border-8 border-gray-700 shadow-2xl min-h-[36rem] lg:min-h-0 lg:overflow-hidden">
-        
-        {/* 顶部：控制条 */}
-        <div className="relative z-30 w-full shrink-0 p-2 sm:p-3 flex flex-wrap justify-between items-center gap-2">
-          <div className="bg-black/50 px-4 py-2 rounded-full text-sm font-bold text-gray-300">
-            {table.name} ({table.smallBlind}/{table.bigBlind}){sizeLabel ? ` · ${sizeLabel}` : ''}{effective != null ? ` · 有效 ${stackText(effective, table.bigBlind)}` : ''}
+    <div className={`game-shell flex h-dvh min-h-[560px] flex-col overflow-hidden bg-[#0a110e] text-white lg:flex-row ${sidebarOpen ? 'sidebar-is-open' : ''}`}>
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="relative z-30 flex h-[68px] shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-[#101815] px-3 shadow-md sm:px-5 lg:h-[74px]">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[#d9c16b55] bg-[#d9c16b12] text-[#e2c970]"><Spade size={21} fill="currentColor" /></div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h1 className="truncate text-sm font-bold tracking-wide text-[#f1eee3] sm:text-base">{table.name.replace(/\s*\([^)]*\)/, '')}</h1>
+                <span className="hidden rounded bg-[#d9c16b15] px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-[#d9c16b] sm:inline">练习室</span>
+              </div>
+              <div className="mt-1 flex items-center gap-2 text-[10px] text-[#8f9e94] sm:text-xs">
+                <span>盲注 ${table.smallBlind}/${table.bigBlind}</span><span className="text-[#405148]">/</span><span>{sizeLabel || `${players.length} 人桌`}</span>
+                {effective != null && <span className="hidden md:inline">· 有效 {stackText(effective, table.bigBlind)}</span>}
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={toggleSound} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-bold shadow-md transition-colors">
-              {soundOn ? '音效开' : '音效关'}
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+            <div className="mr-1 hidden items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-xs text-[#bbc5bb] xl:flex"><span className="h-1.5 w-1.5 rounded-full bg-[#79ae78]" />第 {handNumber || '—'} 手</div>
+            <button type="button" onClick={toggleSound} title={soundOn ? '音效开，点击关闭' : '音效关，点击打开'} aria-label={soundOn ? '音效开，点击关闭' : '音效关，点击打开'} className="grid h-9 w-9 place-items-center rounded-lg border border-white/10 text-[#b5c0b6] transition hover:bg-white/10">
+              {soundOn ? <Volume2 size={17} /> : <VolumeX size={17} />}
             </button>
-            <button onClick={handleLeave} className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-sm font-bold shadow-md transition-colors">
-              站起离开
+            <button type="button" onClick={() => openSidebar('teach')} title="教学提示" aria-label="打开教学提示" className="hidden h-9 w-9 place-items-center rounded-lg border border-white/10 text-[#b5c0b6] transition hover:bg-white/10 sm:grid"><GraduationCap size={18} /></button>
+            <button type="button" onClick={() => setSidebarOpen(!sidebarOpen)} aria-expanded={sidebarOpen} aria-controls="table-sidebar" className={`flex h-9 items-center gap-2 rounded-lg border px-2.5 text-xs font-semibold transition sm:px-3 ${sidebarOpen ? 'border-[#d9c16b60] bg-[#d9c16b15] text-[#e5ce80]' : 'border-white/10 text-[#c1cbc2] hover:bg-white/10'}`}>
+              <PanelRightOpen size={17} /><span className="hidden sm:inline">对局日志</span><span className="sm:hidden">日志</span>
             </button>
+            <button type="button" onClick={handleLeave} title="站起离开" className="flex h-9 items-center gap-2 rounded-lg px-2.5 text-xs font-semibold text-[#b9c0b9] transition hover:bg-[#a84c4220] hover:text-[#e79c8d] sm:px-3"><LogOut size={16} /><span className="hidden md:inline">离开</span></button>
           </div>
-        </div>
+        </header>
 
         <TableFelt
           players={players}
@@ -253,39 +281,26 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
           buttonIndex={buttonIndex}
           currentPlayerIndex={currentPlayerIndex}
           streetActions={streetActions}
+          payouts={settledHand?.payouts ?? []}
         />
 
         {/* 底部操作面板 */}
-        <div className="bg-gray-900 p-2 border-t border-gray-700 flex justify-center items-center shrink-0 z-30 max-h-[46dvh] overflow-y-auto">
+        <div className="relative z-30 flex shrink-0 justify-center bg-gradient-to-t from-[#07140d] to-[#0b281a] px-2 py-3 sm:px-4 sm:py-4">
           {stage === 'idle' || stage === 'showdown' ? (
-            <div className="flex flex-wrap justify-center gap-2">
-              <button
-                onClick={() => latestHand && setManualReviewId(latestHand.id)}
-                disabled={!latestHand}
-                className="px-5 py-3 rounded-xl font-bold bg-gray-700 disabled:text-gray-500"
-              >
-                本手回顾
-              </button>
-              <button
-                onClick={handleDealClick}
-                className={`px-8 py-3 rounded-xl font-bold text-lg shadow-lg transition-colors ${
-                  human && human.chips === 0 
-                    ? 'bg-orange-600 hover:bg-orange-500 ring-4 ring-orange-500/50' 
-                    : 'bg-blue-600 hover:bg-blue-500'
-                }`}
-              >
-                {stage === 'showdown' 
-                  ? (human && human.chips === 0 ? `重新买入 $${table.buyIn}` : '下一手') 
-                  : '开始游戏'}
+            <div className="control-dock flex w-full max-w-lg flex-wrap items-center justify-center gap-2 p-2.5 sm:gap-3 sm:p-3">
+              <div className="mr-auto hidden pl-2 sm:block"><div className="text-[10px] text-[#738176]">你的手牌已准备好</div><div className="mt-0.5 text-xs font-bold text-[#344b3b]">{stage === 'showdown' ? '本手已结束' : '开始一手新的练习'}</div></div>
+              <button onClick={() => latestHand && setManualReviewId(latestHand.id)} disabled={!latestHand} className="action-btn action-neutral">本手回顾</button>
+              <button onClick={handleDealClick} className={`action-btn px-7 text-sm ${human && human.chips === 0 ? 'action-allin' : 'action-raise'}`}>
+                {stage === 'showdown' ? (human && human.chips === 0 ? `重新买入 $${table.buyIn}` : '下一手') : '开始游戏'}
               </button>
             </div>
-          ) : showRaisePanel && human ? (
+          ) : showRaisePanel && human && isHumanTurnNow ? (
             /* 加注尺寸面板：滑杆 + 快捷尺寸 + 确认/取消 */
-            <div className="flex flex-col items-center gap-1.5 w-full max-w-md px-2">
+            <div className="control-dock thin-scroll flex max-h-[42dvh] w-full max-w-xl flex-col items-center gap-2 overflow-y-auto p-3">
               <div className="flex items-baseline gap-2">
-                <span className="text-gray-300 text-sm">{verb}到</span>
-                <span className="text-yellow-400 font-bold text-2xl">${raiseText === '' ? '—' : raiseText}</span>
-                <span className="text-gray-500 text-xs">(再投入 {addedPreview == null ? '—' : `$${addedPreview}`})</span>
+                <span className="text-sm text-[#5a685d]">{verb}到</span>
+                <span className="text-2xl font-bold text-[#765f24]">${raiseText === '' ? '—' : raiseText}</span>
+                <span className="text-xs text-[#7c867e]">(再投入 {addedPreview == null ? '—' : `$${addedPreview}`})</span>
               </div>
 
               <input
@@ -299,9 +314,9 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                   setRaiseText(e.target.value);
                   setRaiseError(null);
                 }}
-                className="w-full accent-purple-500 disabled:opacity-40"
+                className="w-full accent-[#597f4d] disabled:opacity-40"
               />
-              <div className="flex justify-between w-full text-[10px] text-gray-500 -mt-1">
+              <div className="-mt-1 flex w-full justify-between text-[10px] text-[#7d877e]">
                 <span>Min ${raiseMin}</span>
                 <span>All-in ${raiseMax}</span>
               </div>
@@ -315,7 +330,7 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                       setRaiseError(null);
                     }}
                     className={`px-3 py-1 rounded-lg text-xs sm:text-sm font-bold transition-all ${
-                      raiseText === String(shortcut.raiseTo) ? 'bg-purple-600 ring-2 ring-purple-400' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                      raiseText === String(shortcut.raiseTo) ? 'size-btn active' : 'size-btn hover:brightness-110'
                     }`}
                   >
                     {shortcut.label}
@@ -330,112 +345,73 @@ export const GameTable: React.FC<{ onLeave: () => void }> = ({ onLeave }) => {
                   setRaiseText(event.target.value);
                   setRaiseError(null);
                 }}
-                className="w-28 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm"
+                className="w-32 rounded border border-[#b9c2b8] bg-white px-2 py-1.5 text-center text-sm text-[#27382c]"
               />
               {raiseError && <p className="text-red-400 text-xs text-center">{raiseError}</p>}
 
-              <div className="sticky bottom-0 flex gap-3 bg-gray-900 py-1">
+              <div className="flex gap-2 pt-1">
                 <button
                   onClick={() => {
                     setShowRaisePanel(false);
                     setRaiseError(null);
                   }}
-                  className="px-4 sm:px-6 py-2 rounded-xl font-bold bg-gray-700 hover:bg-gray-600 transition-all"
+                  className="action-btn action-neutral"
                 >
                   取消
                 </button>
                 <button
                   onClick={handleRaiseConfirm}
-                  className="px-4 sm:px-6 py-2 rounded-xl font-bold bg-purple-600 hover:bg-purple-500 transition-all"
+                  className="action-btn action-raise"
                 >
                   确认{verb} {raiseText}
                 </button>
               </div>
             </div>
           ) : (
-            <div className="flex flex-col items-center gap-2">
-            {isHumanTurn && quote && quote.toCall > 0 && (
-              <p className="text-xs text-gray-300 text-center max-w-xl">{quote.label}</p>
-            )}
-            {isHumanTurn && effective != null && (
-              <p className="text-[11px] text-gray-500">有效筹码 {stackText(effective, table.bigBlind)}{humanRole ? ` · ${humanRole}` : ''}</p>
-            )}
-            <div className="flex flex-wrap justify-center gap-2 sm:gap-4">
-              <button
-                onClick={() => playerFold()}
-                disabled={!isHumanTurn}
-                className={`px-4 sm:px-6 py-2 rounded-xl font-bold transition-all ${isHumanTurn ? 'bg-red-600 hover:bg-red-500' : 'bg-gray-700 text-gray-500'}`}
-              >
-                弃牌 (Fold)
-              </button>
-              
-              {currentMaxBet === (human?.currentBet || 0) ? (
-                <button 
-                  onClick={() => playerCheck()}
-                  disabled={!isHumanTurn}
-                  className={`px-4 sm:px-6 py-2 rounded-xl font-bold transition-all ${isHumanTurn ? 'bg-green-600 hover:bg-green-500' : 'bg-gray-700 text-gray-500'}`}
-                >
-                  过牌 (Check)
-                </button>
-              ) : (
-                <button 
-                  onClick={() => playerCall()}
-                  disabled={!isHumanTurn}
-                  className={`px-4 sm:px-6 py-2 rounded-xl font-bold transition-all ${isHumanTurn ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-700 text-gray-500'}`}
-                >
-                  跟注 ${quote?.callCost ?? amountToCall}
-                </button>
-              )}
-              
-              <button
-                onClick={openRaisePanel}
-                disabled={!isHumanTurn || !human?.canRaise}
-                className={`px-4 sm:px-6 py-2 rounded-xl font-bold transition-all ${isHumanTurn && human?.canRaise ? 'bg-purple-600 hover:bg-purple-500' : 'bg-gray-700 text-gray-500'}`}
-              >
-                {verb}
-              </button>
-
-              <button
-                onClick={() => setShowAllInModal(true)}
-                disabled={!isHumanTurn || (human && human.chips === 0) || !human?.canRaise}
-                className={`px-4 sm:px-6 py-2 rounded-xl font-bold transition-all ${isHumanTurn && human && human.chips > 0 && human.canRaise ? 'bg-orange-600 hover:bg-orange-500' : 'bg-gray-700 text-gray-500'}`}
-              >
-                All-in
-              </button>
-            </div>
+            <div className="control-dock flex w-full max-w-2xl flex-col items-center gap-2 p-2.5 sm:p-3">
+              <div className="flex w-full items-center justify-between gap-2 px-1">
+                <span className={`flex items-center gap-1.5 text-[11px] font-semibold ${isHumanTurn ? 'text-[#477544]' : 'text-[#778079]'}`}><span className={`h-1.5 w-1.5 rounded-full ${isHumanTurn ? 'bg-[#5c914c]' : 'bg-[#9ca49d]'}`} />{isHumanTurn ? '轮到你行动' : '等待其他玩家'}</span>
+                <span className="truncate text-right text-[10px] text-[#788178]">{isHumanTurn && quote && quote.toCall > 0 ? quote.label : effective != null ? `有效 ${stackText(effective, table.bigBlind)}${humanRole ? ` · ${humanRole}` : ''}` : '观察牌桌，等待行动'}</span>
+              </div>
+              <div className="grid w-full grid-cols-4 gap-1.5 sm:gap-2">
+                <button onClick={() => playerFold()} disabled={!isHumanTurn} className="action-btn action-fold px-1 sm:px-4"><span className="sm:hidden">弃牌</span><span className="hidden sm:inline">弃牌 Fold</span></button>
+                {currentMaxBet === (human?.currentBet || 0) ? (
+                  <button onClick={() => playerCheck()} disabled={!isHumanTurn} className="action-btn action-call px-1 sm:px-4"><span className="sm:hidden">过牌</span><span className="hidden sm:inline">过牌 Check</span></button>
+                ) : (
+                  <button onClick={() => playerCall()} disabled={!isHumanTurn} className="action-btn action-call px-1 sm:px-4">跟注 ${quote?.callCost ?? amountToCall}</button>
+                )}
+                <button onClick={openRaisePanel} disabled={!isHumanTurn || !human?.canRaise} className="action-btn action-raise px-1 sm:px-4">{verb}</button>
+                <button onClick={() => setShowAllInModal(true)} disabled={!isHumanTurn || (human && human.chips === 0) || !human?.canRaise} className="action-btn action-allin px-1 sm:px-4">All-in</button>
+              </div>
             </div>
           )}
         </div>
 
-      </div>
+      </main>
 
-      {/* 右侧：教学辅助与日志面板 */}
-      <div className="w-full lg:w-80 lg:min-h-0 flex flex-col gap-4">
-        {/* 日志面板 */}
-        <div className="bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden flex flex-col shadow-xl h-48 lg:h-auto lg:flex-1 lg:min-h-0">
-          <div className="bg-gray-900 p-3 border-b border-gray-700 font-bold text-gray-300">
-            📝 对局日志
-          </div>
-          <div ref={logBoxRef} className="flex-1 overflow-y-auto p-4 space-y-2 text-sm text-gray-400 font-mono">
-            {gameLog.length === 0 && <div className="text-center text-gray-600 mt-4">等待游戏开始...</div>}
-            {gameLog.map((log, i) => (
-              <div key={i} className={`${log.includes('---') ? 'text-blue-400 my-4' : ''} ${log.includes('赢') ? 'text-yellow-400 font-bold' : ''}`}>
-                {log}
-              </div>
-            ))}
-          </div>
+      {sidebarOpen && <button type="button" aria-label="关闭侧边栏" onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-40 bg-black/60 backdrop-blur-[2px] lg:hidden" />}
+      <aside id="table-sidebar" aria-label="对局辅助侧栏" className={`${sidebarOpen ? 'fixed inset-y-0 right-0 z-50 flex w-[min(88vw,360px)]' : 'hidden'} side-panel min-h-0 flex-col lg:static lg:z-20 lg:h-full lg:w-[clamp(280px,23vw,350px)] lg:shrink-0`}>
+        <div className="flex h-[68px] shrink-0 items-center justify-between border-b border-white/10 px-4 lg:h-[74px]">
+          <div><div className="text-sm font-bold text-[#ece9df]">牌桌助手</div><div className="mt-1 text-[10px] text-[#7f9084]">记录行动，也记录进步</div></div>
+          <button type="button" onClick={() => setSidebarOpen(false)} aria-label="收起日志" className="grid h-9 w-9 place-items-center rounded-lg text-[#9ba99f] hover:bg-white/10"><X size={19} /></button>
         </div>
-
-        {/* 教学提示与图鉴（Module 6） */}
-        <div className="h-48 overflow-y-auto lg:h-auto lg:flex-1">
-          <TeachingPanel
-            humanCards={human?.cards || []}
-            boardCards={board}
-            role={humanRole}
-            raiseCount={raiseCount}
-          />
+        <div className="grid shrink-0 grid-cols-2 gap-1 p-3">
+          <button type="button" onClick={() => setSideTab('log')} className={`flex items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-bold ${sideTab === 'log' ? 'bg-[#d9c16b18] text-[#e5cd7d]' : 'text-[#86958a] hover:bg-white/5'}`}><ScrollText size={15} />对局日志</button>
+          <button type="button" onClick={() => setSideTab('teach')} className={`flex items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-bold ${sideTab === 'teach' ? 'bg-[#d9c16b18] text-[#e5cd7d]' : 'text-[#86958a] hover:bg-white/5'}`}><GraduationCap size={16} />教学提示</button>
         </div>
-      </div>
+        {sideTab === 'log' ? (
+          <div className="flex min-h-0 flex-1 flex-col px-4 pb-4">
+            <div className="mb-2 flex items-center justify-between text-[10px] text-[#738278]"><span>实时记录</span><span>{gameLog.length} 条</span></div>
+            <div ref={logBoxRef} className="thin-scroll flex-1 overflow-y-auto pr-1 font-mono text-xs text-[#a7b4a9]">
+              {gameLog.length === 0 && <div className="mt-16 text-center text-[#617067]">等待游戏开始...</div>}
+              {gameLog.map((log, i) => <div key={i} className={`log-line ${log.includes('---') ? 'font-bold text-[#8eafbd]' : ''} ${log.includes('赢') ? 'font-bold text-[#e0c471]' : ''}`}>{log}</div>)}
+            </div>
+            <div className="mt-3 rounded-lg border border-white/5 bg-black/15 p-3 text-[10px] leading-relaxed text-[#6f8074]">日志仅展示公开行动，不会透露其他玩家的底牌。</div>
+          </div>
+        ) : (
+          <div className="thin-scroll min-h-0 flex-1 overflow-y-auto p-3"><TeachingPanel humanCards={human?.cards || []} boardCards={board} role={humanRole} raiseCount={raiseCount} /></div>
+        )}
+      </aside>
 
       {reviewId && (
         <HandReview

@@ -58,11 +58,14 @@ describe('行动反馈界面', () => {
       const tops = [...markup.matchAll(/top:([0-9.]+)%/g)].map((match) => Number(match[1]));
       expect(ids).toEqual(players.map((player) => player.id));
       expect(roles).toEqual(players.map((_, seat) => roleAt(seat, 0, players.map((player) => player.status)) ?? 'out'));
-      expect(markup.split('♠').length - 1).toBe(1);
+      // 角标与中央主花色应属于同一张可见手牌，牌背不渲染花色。
+      expect(markup).toContain('aria-label="黑桃A"');
+      expect(markup).toContain('card-corner-top');
+      expect(markup).toContain('card-suit');
       expect(markup).toContain('>D</div>');
       expect(markup).toContain('data-current="true"');
       expect(markup).toContain('弃牌');
-      expect(markup).toContain('Pot: $3');
+      expect(markup).toContain('底池 $3');
       expect(markup).toContain('对手1');
       expect(tops[0]).toBeGreaterThan(tops[Math.floor(size / 2)]);
     }
@@ -77,7 +80,31 @@ describe('行动反馈界面', () => {
       currentPlayerIndex: -1,
       streetActions: [],
     }));
-    expect(shown.split('♥').length - 1).toBe(5);
-    expect(shown).toContain('>2</div>');
+    const won = renderToStaticMarkup(React.createElement(TableFelt, {
+      players: playersFor(4),
+      stage: 'showdown',
+      pot: 0,
+      board: ['2c', '3d', '4h', '5s', '6c'],
+      bigBlind: 2,
+      buttonIndex: 0,
+      currentPlayerIndex: -1,
+      streetActions: [],
+      payouts: [
+        { label: '主池', playerId: 'human', amount: 40, kind: 'win' },
+        { label: '边池', playerId: 'human', amount: 20, kind: 'win' },
+        { label: '平分底池', playerId: 'ai_0', amount: 10, kind: 'win' },
+        { label: '未匹配退还', playerId: 'ai_1', amount: 30, kind: 'refund' },
+      ],
+    }));
+    expect(won).toContain('data-winner="true"');
+    expect(won).toContain('获胜');
+    expect(won).toContain('+$60');
+    expect(won).toContain('+$10');
+    expect(won).toContain('平分底池');
+    expect(won).not.toContain('+$30');
+
+    // 一张红桃公共牌包含上角、下角、中央三处花色；隐藏的手牌牌背不包含红桃。
+    expect(shown.split('♥').length - 1).toBe(15);
+    expect(shown).toContain('<span class="card-rank">2</span>');
   });
 });
