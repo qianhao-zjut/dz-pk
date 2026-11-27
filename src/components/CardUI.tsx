@@ -29,9 +29,7 @@ export const CardUI: React.FC<CardProps> = ({ card, className = '', fit = 'full'
       className={`playing-card ${sizeClass} ${red ? 'is-red' : 'is-black'} ${className}`}
       aria-label={`${suitName}${rankText}`}
     >
-      <div className="card-corner card-corner-top"><span className="card-rank">{rankText}</span><span className="card-corner-suit">{suitChar}</span></div>
-      <div className="card-suit" aria-hidden="true">{suitChar}</div>
-      <div className="card-corner card-corner-bottom" aria-hidden="true"><span className="card-rank">{rankText}</span><span className="card-corner-suit">{suitChar}</span></div>
+      <div className="card-face"><span className="card-rank">{rankText}</span><span className="card-suit" aria-hidden="true">{suitChar}</span></div>
     </div>
   );
 };

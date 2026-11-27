@@ -23,9 +23,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid #f0d681; outline-
 /* 绿色绒面与克制的纹理，让牌桌成为画面主体。 */
 .table-felt {
   background:
-    radial-gradient(ellipse at 50% 46%, #1a7544a8 0%, #0b512d30 43%, #032416a0 100%),
-    repeating-linear-gradient(115deg, #ffffff03 0, #ffffff03 1px, transparent 1px, transparent 4px),
-    #0a4b28;
+    radial-gradient(ellipse at 50% 43%, #3ca66b80 0%, #16734670 48%, #0b492870 100%),
+    repeating-linear-gradient(115deg, #ffffff04 0, #ffffff04 1px, transparent 1px, transparent 4px),
+    #17683d;
 }
 .table-felt::before {
   content: "";
@@ -33,7 +33,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid #f0d681; outline-
   inset: 6% 5% 8%;
   border: 1px solid #acd08a12;
   border-radius: 48%;
-  box-shadow: inset 0 0 90px #00180e35, 0 0 50px #00180e25;
+  box-shadow: inset 0 0 80px #07351b14, 0 0 40px #93c68c0a;
   pointer-events: none;
 }
 .table-felt::after {
@@ -41,14 +41,14 @@ button:focus-visible, input:focus-visible { outline: 2px solid #f0d681; outline-
   position: absolute;
   inset: auto 0 0;
   height: 18%;
-  background: linear-gradient(transparent, #00150e45);
+  background: linear-gradient(transparent, #073a201c);
   pointer-events: none;
 }
 
 .seat-card {
   width: var(--seat-width, 132px);
   border-radius: 9px;
-  background: linear-gradient(135deg, #293331f5, #111a18fa);
+  background: linear-gradient(135deg, #35423cf5, #1e2c26fa);
   border: 1px solid #92a09a45;
   box-shadow: 0 5px 15px #00120d70, inset 0 1px #ffffff0c;
   transition: border-color .25s, box-shadow .25s, opacity .25s, filter .25s;
@@ -117,14 +117,18 @@ button:focus-visible, input:focus-visible { outline: 2px solid #f0d681; outline-
 }
 .is-red { color: #c94440; }
 .is-black { color: #17221e; }
-.card-corner { position: absolute; top: 6%; left: 9%; display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.card-corner-bottom { top: auto; left: auto; right: 9%; bottom: 6%; transform: rotate(180deg); }
-.card-rank { font-size: calc(var(--card-w, 54px) * .38); font-weight: 750; line-height: .95; letter-spacing: -.045em; font-variant-numeric: tabular-nums; }
-.card-corner-suit { font-family: "Arial Unicode MS", "PingFang SC", sans-serif; font-size: calc(var(--card-w, 54px) * .26); line-height: 1; }
+.card-face {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: calc(var(--card-w, 54px) * .025); padding: 3%;
+}
+.card-rank {
+  font-family: Arial, "Helvetica Neue", sans-serif;
+  font-size: calc(var(--card-w, 54px) * .64); font-weight: 400; line-height: .96;
+  letter-spacing: -.07em; font-variant-numeric: tabular-nums;
+}
 .card-suit {
-  position: absolute; left: 50%; top: 52%; transform: translate(-50%, -50%);
   font-family: "Arial Unicode MS", "PingFang SC", sans-serif;
-  font-size: calc(var(--card-w, 54px) * .59); line-height: 1; text-align: center;
+  font-size: calc(var(--card-w, 54px) * .60); line-height: 1; text-align: center;
 }
 .card-back { display: grid; place-items: center; padding: 4px; background: #f4eddc; border-color: #e9dfc8; }
 .card-back-pattern {
@@ -137,16 +141,15 @@ button:focus-visible, input:focus-visible { outline: 2px solid #f0d681; outline-
 .card-empty { border: 1px solid #aec99814; border-radius: 6px; background: #002b1710; box-shadow: inset 0 0 12px #00241312; }
 .board-card { --card-w: clamp(44px, 4.5vw, 62px); --card-h: clamp(62px, 6.3vw, 86px); }
 .hole-card { --card-w: 30px; --card-h: 43px; border-radius: 4px; }
-.hole-card .card-corner { top: 6%; left: 10%; gap: 1px; }
-.hole-card .card-corner-bottom { top: auto; left: auto; right: 10%; bottom: 6%; }
-.hole-card .card-rank { font-size: calc(var(--card-w) * .37); letter-spacing: -.08em; }
-.hole-card .card-corner-suit { font-size: calc(var(--card-w) * .25); }
-.hole-card .card-suit { font-size: calc(var(--card-w) * .48); }
+.hole-card .card-face { gap: 0; }
+.hole-card .card-rank { font-size: calc(var(--card-w) * .64); letter-spacing: -.08em; }
+.hole-card .card-suit { font-size: calc(var(--card-w) * .60); }
 .hole-card.card-back { padding: 2px; }
 .hole-card .card-back-pattern { border-radius: 2px; }
-.is-human .seat-hole { gap: 0; padding-left: 4px; }
-.is-human .hole-card { --card-w: 38px; --card-h: 53px; }
-.is-human .hole-card + .hole-card { margin-left: -7px; transform: translateY(-3px) rotate(3deg); }
+.is-human.seat-card { --seat-width: clamp(148px, 13vw, 184px); }
+.is-human .seat-hole { gap: 5px; padding-left: 0; }
+.is-human .hole-card { --card-w: 42px; --card-h: 58px; }
+.is-human .hole-card + .hole-card { margin-left: 0; transform: none; }
 
 .control-dock {
   background: linear-gradient(180deg, #f7f8f5, #e3e8e1); color: #27322d;
@@ -177,6 +180,10 @@ button:focus-visible, input:focus-visible { outline: 2px solid #f0d681; outline-
 }
 @media (max-width: 1023px) {
   .seat-card { --seat-width: clamp(92px, 22vw, 124px); }
+  .is-human.seat-card { --seat-width: clamp(132px, 36vw, 156px); }
+  .is-human .seat-avatar { display: none; }
+  .is-human .seat-top { justify-content: center; }
+  .is-human .hole-card { --card-w: 38px; --card-h: 53px; }
   .seat-top { gap: 4px; padding: 4px; }
   .seat-avatar { width: 25px; height: 32px; font-size: 12px; }
   .seat-hole { min-height: 37px; gap: 2px; }

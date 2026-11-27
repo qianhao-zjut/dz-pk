@@ -58,10 +58,11 @@ describe('行动反馈界面', () => {
       const tops = [...markup.matchAll(/top:([0-9.]+)%/g)].map((match) => Number(match[1]));
       expect(ids).toEqual(players.map((player) => player.id));
       expect(roles).toEqual(players.map((_, seat) => roleAt(seat, 0, players.map((player) => player.status)) ?? 'out'));
-      // 角标与中央主花色应属于同一张可见手牌，牌背不渲染花色。
+      // 点数在上、花色在下，共同作为居中的牌面内容。
       expect(markup).toContain('aria-label="黑桃A"');
-      expect(markup).toContain('card-corner-top');
-      expect(markup).toContain('card-suit');
+      expect(markup).toContain('card-face');
+      expect(markup).not.toContain('card-corner-suit');
+      expect(markup).not.toContain('card-corner-bottom');
       expect(markup).toContain('>D</div>');
       expect(markup).toContain('data-current="true"');
       expect(markup).toContain('弃牌');
@@ -103,8 +104,8 @@ describe('行动反馈界面', () => {
     expect(won).toContain('平分底池');
     expect(won).not.toContain('+$30');
 
-    // 一张红桃公共牌包含上角、下角、中央三处花色；隐藏的手牌牌背不包含红桃。
-    expect(shown.split('♥').length - 1).toBe(15);
+    // 每张明牌只保留一个中央花色，角标只显示点数，牌背不泄露花色。
+    expect(shown.split('♥').length - 1).toBe(5);
     expect(shown).toContain('<span class="card-rank">2</span>');
   });
 });
